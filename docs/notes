@@ -1,0 +1,389 @@
+# Host Setup
+
+VLANID:
+* FFHL (old): 6627812
+* FFHL (new): 13812637
+* FFV, Plauen: 12094920
+
+$ sudo ~/dev-priv/vm/start-openwrt.sh ./gluon-ffv-b20230103-exp-x86-64.img
+[ set role of WAN interface from "uplink" to "mesh" in /etc/config/gluon ]
+[ in /etc/config/gluon-setup-mode set "configured" to 1 ]
+[ gluon-reconfigure; reboot ]
+$ sudo brctl delif br0 vowrt-wan-0
+$ sudo ip -6 a a fe80::0cdf:c5ff:fe6b:9383/64 dev vowrt-wan-0
+$ sudo ip link add vxlan0 type vxlan id 12094920 dstport 4789 local fe80::0cdf:c5ff:fe6b:9383 group ff02::15c udp6zerocsumtx udp6zerocsumrx dev vowrt-wan-0
+$ sudo batctl if add vxlan0
+$ sudo ip link set up dev vxlan0
+$ sudo ip link set up dev bat0
+
+MLD Queries generated via:
+
+$ cd ~/dev-priv/ipv6toolkit
+$ sudo ./mldq6 -i bat0
+
+
+# MACVLAN
+
+Idea: Add a splitter between bat0 and br-client. Steal MLD packets
+that get out of bat0 before they reach the bridge.
+
+TL;DR: Does not work.
+
+bridge/vepa/private modes:
+-> Allows to create a junction like:
+
+* private mode:
+
+[bat0-client]   [bat0-mldproxy]
+          |        |
+          ----  ----
+             |  |
+            [bat0]
+
+* bridge mode:
+
+[bat0-client]   [bat0-mldproxy]
+          |        |
+          ----------
+               |
+            [bat0]
+
+But adding a bridge on top of bat0-client will only forward
+frames from bat0 to bat0-client which have a multicast
+destination or bat0-client's MAC as destination.
+
+Passthrou mode:
+
+Is more transparent, passes through all destination MACs.
+But does not allow multiple macvlan devices over bat0...
+
+
+# TC
+
+         ....<tc>....  /--[br-client]--\
+         .          .  |
+         .          .  |
+[bat0-mldproxy]    [bat0]
+
+
+Steal MLD to the mesh side.
+
+## Incoming MLD Query, from mesh:
+* Redirect (or mirror?) from bat0 to bat0-mldproxy
+(* probably mirror in brmldproxy, with tc, to be able to
+   use it as a generic proxy, as long as brmldproxy can only
+   proxy reports but not queries; and then ebtables in Gluon
+   should be able to still filter it without interfering with
+   brmldproxy?)
+
+```
+ip link add bat0-mldproxy type dummy
+
+# remove NOARP flag with "arp on" and adds solicited multicast addresses
+ip link set address $(cat /sys/class/net/br-client/address) arp on up dev bat0-mldproxy
+
+tc qdisc add dev bat0 handle ffff: ingress
+tc filter add dev bat0 parent ffff: protocol ipv6 prio 4223 handle 1: u32 divisor 1
+tc filter add dev bat0 parent ffff: protocol ipv6 prio 4223 u32 ht 1: match u8 0 0x00 action mirred ingress redirect dev bat0-mldproxy
+tc filter add dev bat0 parent ffff: protocol ipv6 prio 4223 handle 2: u32 divisor 1
+tc filter add dev bat0 parent ffff: protocol ipv6 prio 4223 u32 ht 2: match u8 130 0xff at 48 link 1:
+tc filter add dev bat0 parent ffff: protocol ipv6 prio 4223 u32 ht 2: match u8 131 0xff at 48 link 1:
+tc filter add dev bat0 parent ffff: protocol ipv6 prio 4223 u32 ht 2: match u8 132 0xff at 48 link 1:
+tc filter add dev bat0 parent ffff: protocol ipv6 prio 4223 u32 ht 2: match u8 143 0xff at 48 link 1:
+tc filter add dev bat0 parent ffff: protocol ipv6 prio 4223 u32 match ip6 protocol 0 0xff match u32 0x3a000502 0xffffffff at 40 match u32 0x00000000 0xffff0000 at 44 link 2:
+```
+
+To show or delete:
+
+```
+tc filter show dev bat0 parent ffff:
+tc filter show dev bat0 parent ffff: protocol ipv6 prio 4223
+tc filter delete dev bat0 parent ffff: protocol ipv6 prio 4223 u32
+```
+
+
+Explanation:
+
+[IPv6 header matching:]
+ * nexthdr is hop-by-hop? (ip6 protocol 0)
+ * valid 8 bytes hop-by-hop with router alert for MLD?
+ \--(link 2:)--> [ICMPv6 Type matching]:
+                 - MLD Query (130)      \
+                 - MLDv1 Report (131)   \
+                 - MLDv1 Done (132)     \
+                 - MLDv2 Report (143)   --(link 1:) --> redirect to bat0-mldproxy
+
+$ tc filter add dev bat0 parent ffff: protocol ipv6 prio 42 u32 \
+	# IPv6 nexthdr is a Hop-by-hop option:
+	match ip6 protocol 0 0xff \
+	# Hop-by-hop Router-Alert, first 4 bytes:
+	# * RFC2460, section 4.3 (*):
+	#   * nexthdr: 0x3a (58) -> ICMPv6
+	#   * extension header length in 8-octet words (minus 1)
+	#     -> 0x00 -> (0+1)*8 bits = 1 byte
+	# * RFC2711, section 2.1 (**):
+	#   * Hop-by-Hop Option Type: 0x05 -> Router Alert
+	#   * Opt Data Len: 0x02 -> 2 bytes
+	match u32 0x3a000502 0xffffffff at 40 \
+	# Hop-by-hop Router-Alert, second/last 4 bytes:
+	# * RFC2711, section 2.1 (**):
+	#   * Option Data / Value: 0x0000 -> MLD
+	#   * HBH Padding: 0x0000 (Pad1+Pad1) or 0x0100 (PadN)
+	#     -> ignore
+	match u32 0x00000000 0xffff0000 at 44 \
+	action mirred ingress redirect dev bat0-mldproxy
+
+(*): https://www.rfc-editor.org/rfc/rfc2460#section-4.3
+(**): https://www.rfc-editor.org/rfc/rfc2711.html#section-2.1
+
+
+$ tc filter add dev bat0 parent ffff: protocol ipv6 u32 \
+	#
+	match u32 0x3a000502 0xffffffff at 40 \
+	action mirred ingress redirect dev bat0-mldproxy
+
+[
+Issue:
+
+MLD Query is redirected successfully. But it's not forwarded
+to the IPv6 stack? At least no MLD Report is seen. Neither
+"action mirred ingress ..."  nor "action mirred egress ..."
+works?
+
+-> missing "ip6tables -I INPUT -i bat0-mldproxy -j ACCEPT"
+   -> now works with "action mirred ingress ..."!
+]
+
+## Outgoing MLD Report, to mesh:
+* Redirect from bat0-mldproxy to bat0
+
+```
+tc qdisc add dev bat0-mldproxy handle ffff: root fq_codel
+tc filter add dev bat0-mldproxy parent ffff: protocol ipv6 prio 4223 handle 1: u32 divisor 1
+tc filter add dev bat0-mldproxy parent ffff: protocol ipv6 prio 4223 u32 ht 1: match u8 0 0x00 action mirred egress redirect dev bat0
+tc filter add dev bat0-mldproxy parent ffff: protocol ipv6 prio 4223 handle 2: u32 divisor 1
+tc filter add dev bat0-mldproxy parent ffff: protocol ipv6 prio 4223 u32 ht 2: match u8 130 0xff at 48 link 1:
+tc filter add dev bat0-mldproxy parent ffff: protocol ipv6 prio 4223 u32 ht 2: match u8 131 0xff at 48 link 1:
+tc filter add dev bat0-mldproxy parent ffff: protocol ipv6 prio 4223 u32 ht 2: match u8 132 0xff at 48 link 1:
+tc filter add dev bat0-mldproxy parent ffff: protocol ipv6 prio 4223 u32 ht 2: match u8 143 0xff at 48 link 1:
+tc filter add dev bat0-mldproxy parent ffff: protocol ipv6 prio 4223 u32 match ip6 protocol 0 0xff match u32 0x3a000502 0xffffffff at 40 match u32 0x00000000 0xffff0000 at 44 link 2:
+```
+
+To show or delete:
+
+```
+tc filter show dev bat0-mldproxy parent ffff:
+tc filter show dev bat0-mldproxy parent ffff: protocol ipv6 prio 4223
+tc filter delete dev bat0-mldproxy parent ffff: protocol ipv6 prio 4223 u32
+```
+
+Or just call "$ ip link del bat0-mldproxy" to clear at least the outgoing side.
+
+Instead of "root fq_codel", one might want to use "root prio"?
+At least that's what most examples use, but we don't have it
+available by default?
+
+Also, needs to be "action mirred *egress*", as otherwise it
+goes in the direction of the bridge + ebtables? At least we
+don't see it on the other node otherwise. Does egress
+ensure we don't get it on the bridge though?
+
+=> does not quite seem to work? only works for MLDv1 Reports,
+not MLDv2 Reports... even if mangling outgoing+incoming
+filter rule into one each (so no hash table).
+But it's not visible with tcpdump on bat0-mldproxy anymore then,
+so it's somehow snitched by something?
+Maybe due to the different multicast destination address?
+
+=> however redirecting MLDv2 Reports to yet another dummy
+interface (ip link add bat0-mldp-out type dummy) works
+
+=> MLDv2 Report is visible on bat0 though and tc
+   counters seem to increase
+=> enabling batman-adv multicast_forceflood does not help
+=> disabling gluon-ebtables does not help
+
+
+=> changing noflood mark to 0x8/0x8 helps!
+   => why is only MLDv2 report but not MLDv1 report
+      tagged as "noflood"?
+   => even with gluon-ebtables disabled (or at least set-mark 0x4 rule deleted)
+   => skb->mark is always 212 for MLDv2 Reports
+   => skb->mark is a union with skb->reserved_tailroom
+   => for MLDv1 report skb->mark is always 0
+   => reported at:
+      https://lore.kernel.org/netdev/ZLUkWyFiwEqi721V@sellars/
+        From: "Linus Lüssing" <linus.luessing@c0d3.blue>
+        To: Eric Dumazet <edumazet@google.com>
+        Cc: netdev@vger.kernel.org, netfilter@vger.kernel.org
+        Subject: skb->mark not cleared for MLDv2 Reports? (skb->mark == 212 / 0xd4)
+        Date: Mon, 17 Jul 2023 13:22:03 +0200	[thread overview]
+        Message-ID: <ZLUkWyFiwEqi721V@sellars> (raw)
+
+Workaround:
+* "ip6tables -I OUTPUT -o bat0-mldproxy -j MARK --set-mark 0x0"
+
+MLDv1:
+sock_alloc_send_skb()
+-> sock_alloc_send_pskb()
+   -> alloc_skb_with_frags()
+
+MLDv2:
+mld_sendreport()
+
+### Outgoing MLD Report, to mesh, filtering
+
+* filtering non-proxied reports, from other ports to mesh
+
+We need to ensure not have duplicate reports on proxied ports
+The following does not seem to work, filters proxied reports, too
+(tried without Gluon, in a plain container, where veth3 is the
+equivalent of bat0 in Gluon):
+
+```
+sudo tc qdisc add dev veth3 handle fffe: root fq_codel
+sudo tc filter add dev veth3 parent fffe: protocol ipv6 prio 4223 handle 1: u32 divisor 1
+sudo tc filter add dev veth3 parent fffe: protocol ipv6 prio 4223 u32 ht 1: match u8 0 0x00 action drop 
+sudo tc filter add dev veth3 parent fffe: protocol ipv6 prio 4223 handle 2: u32 divisor 1
+sudo tc filter add dev veth3 parent fffe: protocol ipv6 prio 4223 u32 ht 2: match u8 130 0xff at 48 link 1:
+sudo tc filter add dev veth3 parent fffe: protocol ipv6 prio 4223 u32 ht 2: match u8 131 0xff at 48 link 1:
+sudo tc filter add dev veth3 parent fffe: protocol ipv6 prio 4223 u32 ht 2: match u8 132 0xff at 48 link 1:
+sudo tc filter add dev veth3 parent fffe: protocol ipv6 prio 4223 u32 ht 2: match u8 143 0xff at 48 link 1:
+sudo tc filter add dev veth3 parent fffe: protocol ipv6 prio 4223 u32 match ip6 protocol 0 0xff match u32 0x3a000502 0xffffffff at 40 match u32 0x00000000 0xffff0000 at 44 link 2:
+```
+
+Trying to add an exeption for marks (see "man tc-fw" and "man tc-skbedit")
+
+Idea:
+* mark packets that were redirected from bat0-mldproxy dummy interface,
+  as well as "excluded ports" in brmldproxy
+* Then only allow marked MLD to pass
+
+This works better and seems to exclude marked packets:
+
+```
+sudo tc qdisc add dev veth3 handle fffe: root fq_codel
+sudo tc filter add dev veth3 parent fffe: protocol ipv6 prio 4223 handle 1: u32 divisor 1
+sudo tc filter add dev veth3 parent fffe: protocol ipv6 prio 4223 u32 ht 1: match u8 0 0x00 action drop
+sudo tc filter add dev veth3 parent fffe: protocol ipv6 prio 4223 handle 2: u32 divisor 1
+sudo tc filter add dev veth3 parent fffe: protocol ipv6 prio 4223 u32 ht 2: match u8 131 0xff at 48 link 1:
+sudo tc filter add dev veth3 parent fffe: protocol ipv6 prio 4223 u32 ht 2: match u8 132 0xff at 48 link 1:
+sudo tc filter add dev veth3 parent fffe: protocol ipv6 prio 4223 u32 ht 2: match u8 143 0xff at 48 link 1:
+sudo tc filter add dev veth3 parent fffe: protocol ipv6 prio 4222 handle 0x42/0x42 fw classid 1:1
+sudo tc filter add dev veth3 parent fffe: protocol ipv6 prio 4223 u32 match ip6 protocol 0 0xff match u32 0x3a000502 0xffffffff at 40 match u32 0x00000000 0xffff0000 at 44 link 2:
+```
+
+And this marks for marking packets on proxied-dummy device:
+
+```
+sudo tc qdisc add dev brmldp0 handle ffff: root fq_codel
+sudo tc filter add dev brmldp0 parent ffff: protocol ipv6 prio 4223 handle 1: u32 divisor 1
+sudo tc filter add dev brmldp0 parent ffff: protocol ipv6 prio 4223 u32 ht 1: match u8 0 0x00 action skbedit mark 0x42 pipe action mirred egress redirect dev veth3
+sudo tc filter add dev brmldp0 parent ffff: protocol ipv6 prio 4223 handle 2: u32 divisor 1
+sudo tc filter add dev brmldp0 parent ffff: protocol ipv6 prio 4223 u32 ht 2: match u8 130 0xff at 48 link 1:
+sudo tc filter add dev brmldp0 parent ffff: protocol ipv6 prio 4223 u32 ht 2: match u8 131 0xff at 48 link 1:
+sudo tc filter add dev brmldp0 parent ffff: protocol ipv6 prio 4223 u32 ht 2: match u8 132 0xff at 48 link 1:
+sudo tc filter add dev brmldp0 parent ffff: protocol ipv6 prio 4223 u32 ht 2: match u8 143 0xff at 48 link 1:
+sudo tc filter add dev brmldp0 parent ffff: protocol ipv6 prio 4223 u32 match ip6 protocol 0 0xff match u32 0x3a000502 0xffffffff at 40 match u32 0x00000000 0xffff0000 at 44 link 2:
+```
+
+
+====
+
+# Appendix
+
+## TC filter evolution
+
+Note: nexthdr+X is not working for IPv6 (hop-by-hop?)? Always has offset of X and not sizeof(ipv6-hdr)+X
+Also, nexthdr is *not* the IPv6 next-header field.
+
+
+### Incoming MLD Query, from mesh:
+
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 match ip6 protocol 0 0xff action mirred ingress redirect dev bat0-mldproxy
+=> works
+
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 match ip6 protocol 0 0xff match u32 0x3a000502 0xffffffff at 40 match u32 0x00000000 0xffffffff at 44 action mirred ingress redirect dev bat0-mldproxy
+=> works
+
+tc filter add dev bat0 parent ffff: protocol ipv6 handle 1: u32 divisor 1
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 ht 1: match u8 0 0x00 action mirred ingress redirect dev bat0-mldproxy
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 match ip6 protocol 0 0xff match u32 0x3a000502 0xffffffff at 40 match u32 0x00000000 0xffffffff at 44 link 1:
+=> works
+
+
+tc filter add dev bat0 parent ffff: protocol ipv6 handle 1: u32 divisor 1
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 ht 1: match u8 130 0xff at 48 action mirred ingress redirect dev bat0-mldproxy
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 match ip6 protocol 0 0xff match u32 0x3a000502 0xffffffff at 40 match u32 0x00000000 0xffffffff at 44 link 1:
+=> works
+
+
+tc filter add dev bat0 parent ffff: protocol ipv6 handle 1: u32 divisor 1
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 ht 1: match u8 143 0xff at 48 action mirred ingress redirect dev bat0-mldproxy
+tc filter add dev bat0 parent ffff: protocol ipv6 handle 2: u32 divisor 1
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 ht 2: match u8 130 0xff at 48 action mirred ingress redirect dev bat0-mldproxy
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 match ip6 protocol 0 0xff match u32 0x3a000502 0xffffffff at 40 match u32 0x00000000 0xffff0000 at 44 link 1: link 2:
+=> no, will only match "link 2:"
+
+tc filter add dev bat0 parent ffff: protocol ipv6 handle 1: u32 divisor 256
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 ht 1: match u8 143 0xff at 48 action mirred ingress redirect dev bat0-mldproxy
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 ht 1: match u8 130 0xff at 48 action mirred ingress redirect dev bat0-mldproxy
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 match ip6 protocol 0 0xff match u32 0x3a000502 0xffffffff at 40 match u32 0x00000000 0xffff0000 at 44 link 1:
+=> works!
+
+tc filter add dev bat0 parent ffff: protocol ipv6 handle 1: u32 divisor 1
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 ht 1: match u8 143 0xff at 48 action mirred ingress redirect dev bat0-mldproxy
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 ht 1: match u8 130 0xff at 48 action mirred ingress redirect dev bat0-mldproxy
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 match ip6 protocol 0 0xff match u32 0x3a000502 0xffffffff at 40 match u32 0x00000000 0xffff0000 at 44 link 1:
+=> works!
+
+
+tc filter add dev bat0 parent ffff: protocol ipv6 handle 1: u32 divisor 1
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 ht 1: match u8 0 0x00 action mirred ingress redirect dev bat0-mldproxy
+tc filter add dev bat0 parent ffff: protocol ipv6 handle 2: u32 divisor 1
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 ht 2: match u8 143 0xff at 48 link 1:
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 ht 2: match u8 130 0xff at 48 link 1:
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 match ip6 protocol 0 0xff match u32 0x3a000502 0xffffffff at 40 match u32 0x00000000 0xffff0000 at 44 link 2:
+=> works!
+
+tc filter add dev bat0 parent ffff: protocol ipv6 handle 1: u32 divisor 1
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 ht 1: match u8 0 0x00 action mirred ingress redirect dev bat0-mldproxy
+tc filter add dev bat0 parent ffff: protocol ipv6 handle 2: u32 divisor 1
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 ht 2: match u8 130 0xff at 48 link 1:
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 ht 2: match u8 131 0xff at 48 link 1:
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 ht 2: match u8 132 0xff at 48 link 1:
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 ht 2: match u8 143 0xff at 48 link 1:
+tc filter add dev bat0 parent ffff: protocol ipv6 u32 match ip6 protocol 0 0xff match u32 0x3a000502 0xffffffff at 40 match u32 0x00000000 0xffff0000 at 44 link 2:
+=> works!
+
+Adding a "prio 4223" to be able to delete it easily 
+
+tc filter add dev bat0 parent ffff: protocol ipv6 prio 4223 handle 1: u32 divisor 1
+tc filter add dev bat0 parent ffff: protocol ipv6 prio 4223 u32 ht 1: match u8 0 0x00 action mirred ingress redirect dev bat0-mldproxy
+tc filter add dev bat0 parent ffff: protocol ipv6 prio 4223 handle 2: u32 divisor 1
+tc filter add dev bat0 parent ffff: protocol ipv6 prio 4223 u32 ht 2: match u8 130 0xff at 48 link 1:
+tc filter add dev bat0 parent ffff: protocol ipv6 prio 4223 u32 ht 2: match u8 131 0xff at 48 link 1:
+tc filter add dev bat0 parent ffff: protocol ipv6 prio 4223 u32 ht 2: match u8 132 0xff at 48 link 1:
+tc filter add dev bat0 parent ffff: protocol ipv6 prio 4223 u32 ht 2: match u8 143 0xff at 48 link 1:
+tc filter add dev bat0 parent ffff: protocol ipv6 prio 4223 u32 match ip6 protocol 0 0xff match u32 0x3a000502 0xffffffff at 40 match u32 0x00000000 0xffff0000 at 44 link 2:
+=> works, final!
+
+
+### Outgoing MLD Report, to mesh:
+
+```
+tc qdisc add dev bat0-mldproxy handle ffff: ingress
+tc filter add dev bat0-mldproxy parent ffff: protocol ipv6 u32 match ip6 protocol 0 0xff action mirred ingress redirect dev bat0
+```
+
+-> does not redirect, using "action mirred egress ..." sort of works,
+   but misses the ethernet header
+
+(tc filter add dev bat0-mldproxy parent ffff: protocol ipv6 u32 match ip6 protocol 0 0xff match ip6 dst ff02::1:fffa:ac7b action mirred egress redirect dev bat0)
+
+Instead, this works:
+
+```
+tc qdisc add dev bat0-mldproxy handle 1: root fq_codel
+tc filter add dev bat0-mldproxy parent 1: protocol ipv6 u32 match ip6 protocol 0 0xff action mirred egress redirect dev bat0
+```

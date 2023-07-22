@@ -1,0 +1,26 @@
+
+
+root@freifunke4956e44939e:~# bridge -d mdb show
+dev br-wan port br-wan grp ff02::2 temp
+dev br-wan port br-wan grp ff02::6a temp
+dev br-wan port br-wan grp ff02::1:ff44:939e temp
+dev br-wan port br-wan grp ff02::1:ff00:0 temp
+dev br-wan port eth0 grp ff02::fb temp proto kernel
+dev br-wan port eth0 grp ff02::1:ffa4:9848 temp proto kernel
+dev br-client port br-client grp ff05::2:1001 temp
+dev br-client port local-port grp ff02::1:ff00:1 temp proto kernel
+dev br-client port local-port grp ff02::1:ff40:f7dc temp proto kernel
+dev br-client port br-client grp ff02::1:ff44:939e temp
+dev br-client port local-port grp ff02::2 temp proto kernel
+dev br-client port br-client grp ff02::6a temp
+router ports on br-client: bat0 
+root@freifunke4956e44939e:~# 
+root@freifunke4956e44939e:~# cat /lib/gluon/gluon-version 
+v2022.1-402-g205d92e
+root@freifunke4956e44939e:~# uname -a
+Linux freifunke4956e44939e 5.15.119 #0 Sat Jan 1 09:09:13 2022 mips GNU/Linux
+
+Maybe might have listeners on bat0, too?
+Or should be prevented by the according ebtables rules in:
+ "ebtables -t nat -L PREROUTING"
+ -> before bridge snoops it
