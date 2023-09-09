@@ -233,6 +233,29 @@ static void free_ports(struct list_head *head)
 }
 
 /* TODO: replace with netlink maybe? */
+static int get_bridge_mld_version(struct bridge *br)
+{
+	const char *format = "/sys/class/net/%s/bridge/multicast_mld_version";
+	unsigned int filename_size_max = strlen(format) - strlen("%s") + IFNAMSIZ;
+	char filename[filename_size_max];
+	char mld_version[16];
+	FILE *file;
+	int ret;
+
+	ret = snprintf(filename, filename_size_max, format, br->name);
+	if (ret < 0 || !(file = fopen(filename, "r")) ||
+	    !fgets(mld_version, sizeof(mld_version), file) ||
+	    !(ret = atoi(mld_version))) {
+		fprintf(stderr,
+			"Error: Could not parse bridge MLD version for \"%s\"\n",
+			br->name);
+		return -EINVAL;
+	}
+
+	return ret;
+}
+
+/* TODO: replace with netlink maybe? */
 static int get_bridge_ports(struct bridge *br, struct list_head *ports)
 {
 	const char *format = "/sys/class/net/%s/brif/";
@@ -512,6 +535,14 @@ static int parse_args(struct bridge *br, int argc, char *argv[])
 		ports = &br->included_ports_list;
 	else
 		ports = &br->proxied_ports_list;
+
+	ret = get_bridge_mld_version(br);
+	if (ret < 1) {
+		return -EINVAL;
+	} else if (ret > 1) {
+		fprintf(stderr, "Error: MLD version %i not yet supported\n", ret);
+		return -EINVAL;
+	}
 
 	ret = get_bridge_ports(br, ports);
 	if (ret < 0)
