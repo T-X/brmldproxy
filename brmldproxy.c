@@ -84,8 +84,8 @@ static void usage()
 	printf("Usage: brmldproxy -b <bridge> [<options> ...]\n\n");
 	printf("    -b <bridge>                         bridge interface brmldproxy will run on\n");
 	printf("\nOptions:\n");
-	//printf("    -4                                  IPv4-only mode\n");
-	//printf("    -6                                  IPv6-only mode\n");
+	printf("    -4                                  IPv4-only mode (not yet implemented)\n");
+	printf("    -6                                  IPv6-only mode (default)\n");
 	printf("    -i <bridge-port>                    bridge port to proxy (from)\n");
 	// TODO:
 	//printf("    -i <bridge-port>[@<bridge-port]     bridge port to proxy (from)\n");
@@ -105,6 +105,7 @@ static int parse_bridge_arg(struct bridge *br, int argc, char *argv[],
 		int *have_incl_ports, int *have_excl_ports, int *have_prox_ports)
 {
 	int opt;
+	int ipv6_only = 0;
 
 	INIT_LIST_HEAD(&br->included_ports_list);
 	INIT_LIST_HEAD(&br->excluded_ports_list);
@@ -115,8 +116,14 @@ static int parse_bridge_arg(struct bridge *br, int argc, char *argv[],
 
 	*have_incl_ports = *have_excl_ports = *have_prox_ports = 0;
 
-	while ((opt = getopt(argc, argv, "b:i:e:p:I:E:h")) != -1) {
+	while ((opt = getopt(argc, argv, "46b:i:e:p:I:E:h")) != -1) {
 		switch (opt) {
+		case '4':
+			fprintf(stderr, "Error: IPv4 not yet implemented\n");
+			return -EINVAL;
+		case '6':
+			ipv6_only = 1;
+			break;
 		case 'b':
 			if (strlen(br->name)) {
 				/* TODO: implement/allow this later? */
@@ -167,6 +174,9 @@ static int parse_bridge_arg(struct bridge *br, int argc, char *argv[],
 		usage();
 		return -EINVAL;
 	}
+
+	if (!ipv6_only)
+		fprintf(stderr, "Warning: IPv4 not yet implemented, use \"-6\" to suppress this warning\n");
 
 	return 0;
 }
@@ -434,8 +444,10 @@ static int get_args_final(struct bridge *br, struct list_head *ports, int argc, 
 	optind = 1;
 
 //	while ((opt = getopt(argc, argv, "b:46i:e:p:I:E:fh")) != -1) {
-	while ((opt = getopt(argc, argv, "b:i:e:p:I:E:h")) != -1) {
+	while ((opt = getopt(argc, argv, "46b:i:e:p:I:E:h")) != -1) {
 		switch (opt) {
+		case '4':
+		case '6':
 		case 'b':
 			/* already parsed previously */
 			break;
