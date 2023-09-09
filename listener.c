@@ -219,6 +219,13 @@ static void listener_add(struct bridge *br, int port_ifindex, int addr_family, c
 	}
 }
 
+static void listener_purge(struct listener *listener)
+{
+	list_del(&listener->node);
+	close(listener->sd);
+	free(listener);
+}
+
 static void listener_del_v4(struct bridge *br, int ifindex, const struct in_addr *group)
 {
 }
@@ -236,8 +243,7 @@ static void listener_del_v6(struct bridge *br, int ifindex, const struct in6_add
 			if (memcmp(group, &listener->group.ip6, sizeof(*group)))
 				continue;
 
-			list_del(&listener->node);
-			close(listener->sd);
+			listener_purge(listener);
 			break;
 		}
 
@@ -288,16 +294,14 @@ void listener_update(struct bridge *br, int br_ifindex, int port_ifindex, __u16 
 
 void listener_flush(struct brport *port)
 {
-	struct listener *listener;
+	struct listener *listener, *tmp;
 
-	list_for_each_entry(listener, &port->listener_list_v4, node) {
-		list_del(&listener->node);
-		close(listener->sd);
+	list_for_each_entry_safe(listener, tmp, &port->listener_list_v4, node) {
+		listener_purge(listener);
 	}
 
-	list_for_each_entry(listener, &port->listener_list_v6, node) {
-		list_del(&listener->node);
-		close(listener->sd);
+	list_for_each_entry_safe(listener, tmp, &port->listener_list_v6, node) {
+		listener_purge(listener);
 	}
 }
 
