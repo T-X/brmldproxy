@@ -29,6 +29,9 @@
 
 static int running = 1;
 
+#define BRMMDB_CHECK_TIME 3
+#define BRMMDB_CHECK_TIMEOUT 30
+
 /*#include "libnetlink.h"
 //#include "utils.h"
 
@@ -67,13 +70,16 @@ struct rtnl_handle {
 	int			flags;
 
 	struct bridge		*bridge;
-	void			(*callback)(struct bridge *br,
-					    int br_ifindex,
-					    int port_ifindex,
-					    __u16 nlmsg_type,
-					    int addr_family,
-					    const void *group);
+	int			(*update_cb)(struct bridge *br,
+					     int port_ifindex,
+					     __u16 nlmsg_type,
+					     int addr_family,
+					     const void *group);
+	void			(*pre_dump_cb)(struct bridge *br);
+	int			(*post_dump_cb)(struct bridge *br);
 };
+
+static void bridge_monitor_mdb_check(void);
 
 
 typedef int (*rtnl_listen_filter_t)(struct rtnl_ctrl_data *,
@@ -81,7 +87,8 @@ typedef int (*rtnl_listen_filter_t)(struct rtnl_ctrl_data *,
 
 
 
-struct rtnl_handle rth = { .fd = -1 };
+struct rtnl_handle rth_mon = { .fd = -1 };
+struct rtnl_handle rth_dump = { .fd = -1 };
 
 int rcvbuf = 1024 * 1024;
 
@@ -197,6 +204,8 @@ int rtnl_listen(struct rtnl_handle *rtnl,
 			msg.msg_control = &cmsgbuf;
 			msg.msg_controllen = sizeof(cmsgbuf);
 		}
+
+		bridge_monitor_mdb_check();
 
 		iov.iov_len = sizeof(buf);
 		status = recvmsg(rtnl->fd, &msg, 0);
@@ -372,7 +381,7 @@ static inline __u8 rta_getattr_u8(const struct rtattr *rta)
         return *(__u8 *)RTA_DATA(rta);
 }
 
-static void print_mdb_entry(FILE *f, int ifindex, const struct br_mdb_entry *e,
+static void print_mdb_entry(struct rtnl_handle *rth, int ifindex, const struct br_mdb_entry *e,
 			    struct nlmsghdr *n, struct rtattr **tb)
 {
 //	const void *grp, *src;
@@ -434,10 +443,19 @@ static void print_mdb_entry(FILE *f, int ifindex, const struct br_mdb_entry *e,
 	}
 
 
+	if (rth == &rth_dump && n->nlmsg_type != RTM_GETMDB) {
+		//fprintf(stderr, "Warning: MDB dump with unexpected type, ignoring\n");
+		fprintf(stderr, "Warning: MDB dump with unexpected type (%hu, ignoring\n", n->nlmsg_type);
+		return;
+	}
+
 	printf("~~~ br-ifindex: %i, port-ifindex: %i, grp: %s, af: %i\n", ifindex, e->ifindex, addr, af);
 	//printf("~~~ %s:%i: &rntl_handle: %p, &rth: %p\n", __func__, __LINE__, rtnl_handle, &rth);
-	printf("~~~ %s:%i: &rth: %p\n", __func__, __LINE__, &rth);
-	rth.callback(rth.bridge, ifindex, e->ifindex, n->nlmsg_type, af, grp);
+	//printf("~~~ %s:%i: &rth_mon: %p\n", __func__, __LINE__, &rth_mon);
+	if (rth->bridge->ifindex != ifindex)
+		return;
+
+	rth->update_cb(rth->bridge, e->ifindex, n->nlmsg_type, af, grp);
 
 /*	print_color_string(PRINT_ANY, ifa_family_color(af),
 			    "grp", " grp %s", addr);
@@ -508,7 +526,7 @@ static void print_mdb_entry(FILE *f, int ifindex, const struct br_mdb_entry *e,
 	close_json_object();*/
 }
 
-static void br_print_mdb_entry(FILE *f, int ifindex, struct rtattr *attr,
+static void br_print_mdb_entry(struct rtnl_handle *rth, int ifindex, struct rtattr *attr,
 			       struct nlmsghdr *n)
 {
 	struct rtattr *etb[MDBA_MDB_EATTR_MAX + 1];
@@ -522,18 +540,18 @@ static void br_print_mdb_entry(FILE *f, int ifindex, struct rtattr *attr,
 		parse_rtattr_flags(etb, MDBA_MDB_EATTR_MAX, MDB_RTA(RTA_DATA(i)),
 				   RTA_PAYLOAD(i) - RTA_ALIGN(sizeof(*e)),
 				   NLA_F_NESTED);
-		print_mdb_entry(f, ifindex, e, n, etb);
+		print_mdb_entry(rth, ifindex, e, n, etb);
 	}
 }
 
-static void print_mdb_entries(FILE *fp, struct nlmsghdr *n,
+static void print_mdb_entries(struct rtnl_handle *rth, struct nlmsghdr *n,
 			      int ifindex,  struct rtattr *mdb)
 {
 	int rem = RTA_PAYLOAD(mdb);
 	struct rtattr *i;
 
 	for (i = RTA_DATA(mdb); RTA_OK(i, rem); i = RTA_NEXT(i, rem))
-		br_print_mdb_entry(fp, ifindex, i, n);
+		br_print_mdb_entry(rth, ifindex, i, n);
 }
 
 static int accept_msg(struct rtnl_ctrl_data *ctrl,
@@ -541,13 +559,13 @@ static int accept_msg(struct rtnl_ctrl_data *ctrl,
 {
 	struct br_port_msg *r = NLMSG_DATA(n);
 	int len = n->nlmsg_len;
-	FILE *fp = arg;
+	struct rtnl_handle *rth = arg;
 	int ret;
 	struct rtattr *tb[NDA_MAX+1];
 
 	printf("Got message\n");
 
-	printf("~~~ : &fp: %p\n", fp);
+//	printf("~~~ : &fp: %p\n", fp);
 
 	switch (n->nlmsg_type) {
 	case RTM_NEWMDB:
@@ -583,7 +601,7 @@ static int accept_msg(struct rtnl_ctrl_data *ctrl,
 		return ret;
 
 	if (tb[MDBA_MDB])
-		print_mdb_entries(fp, n, r->ifindex, tb[MDBA_MDB]);
+		print_mdb_entries(rth, n, r->ifindex, tb[MDBA_MDB]);
 
 //	if (tb[MDBA_ROUTER])
 //		print_router_entries(fp, n, r->ifindex, tb[MDBA_ROUTER]);
@@ -606,26 +624,391 @@ static int accept_msg(struct rtnl_ctrl_data *ctrl,
 	return 0;
 }
 
-int bridge_monitor_mdb(void (*callback)(struct bridge *br,
-					int br_ifindex,
+int rtnl_mdbdump_req(struct rtnl_handle *rth, int family)
+{
+	struct {
+		struct nlmsghdr nlh;
+		struct br_port_msg bpm;
+	} req = {
+		.nlh.nlmsg_len = NLMSG_LENGTH(sizeof(struct br_port_msg)),
+		.nlh.nlmsg_type = RTM_GETMDB,
+		.nlh.nlmsg_flags = NLM_F_DUMP | NLM_F_REQUEST,
+		.nlh.nlmsg_seq = rth->dump = ++rth->seq,
+		.bpm.family = family,
+	};
+
+	return send(rth->fd, &req, sizeof(req), 0);
+}
+
+static int print_mdbs(struct nlmsghdr *n, void *arg)
+{
+	struct br_port_msg *r = NLMSG_DATA(n);
+	struct rtattr *tb[MDBA_MAX+1];
+	struct rtnl_handle *rth = arg;
+	int ret;
+
+	ret = __parse_mdb_nlmsg(n, tb);
+	if (ret != 1)
+		return ret;
+
+	if (tb[MDBA_MDB])
+		print_mdb_entries(rth, n, r->ifindex, tb[MDBA_MDB]);
+
+	return 0;
+}
+
+typedef int (*rtnl_filter_t)(struct nlmsghdr *n, void *);
+
+typedef int (*rtnl_err_hndlr_t)(struct nlmsghdr *n, void *);
+
+struct rtnl_dump_filter_arg {
+	rtnl_filter_t filter;
+	void *arg1;
+	rtnl_err_hndlr_t errhndlr;
+	void *arg2;
+	__u16 nc_flags;
+};
+
+static int __rtnl_recvmsg(int fd, struct msghdr *msg, int flags)
+{
+	int len;
+
+	do {
+		len = recvmsg(fd, msg, flags);
+	} while (len < 0 && (errno == EINTR || errno == EAGAIN));
+
+	if (len < 0) {
+		fprintf(stderr, "netlink receive error %s (%d)\n",
+			strerror(errno), errno);
+		return -errno;
+	}
+
+	if (len == 0) {
+		fprintf(stderr, "EOF on netlink\n");
+		return -ENODATA;
+	}
+
+	return len;
+}
+
+static int rtnl_recvmsg(int fd, struct msghdr *msg, char **answer)
+{
+	struct iovec *iov = msg->msg_iov;
+	char *buf;
+	int len;
+
+	iov->iov_base = NULL;
+	iov->iov_len = 0;
+
+	len = __rtnl_recvmsg(fd, msg, MSG_PEEK | MSG_TRUNC);
+	if (len < 0)
+		return len;
+
+	if (len < 32768)
+		len = 32768;
+	buf = malloc(len);
+	if (!buf) {
+		fprintf(stderr, "malloc error: not enough buffer\n");
+		return -ENOMEM;
+	}
+
+	iov->iov_base = buf;
+	iov->iov_len = len;
+
+	len = __rtnl_recvmsg(fd, msg, 0);
+	if (len < 0) {
+		free(buf);
+		return len;
+	}
+
+	if (answer)
+		*answer = buf;
+	else
+		free(buf);
+
+	return len;
+}
+
+static int rtnl_dump_done(struct nlmsghdr *h,
+			  const struct rtnl_dump_filter_arg *a)
+{
+	int len = *(int *)NLMSG_DATA(h);
+
+	if (h->nlmsg_len < NLMSG_LENGTH(sizeof(int))) {
+		fprintf(stderr, "DONE truncated\n");
+		return -1;
+	}
+
+	if (len < 0) {
+		errno = -len;
+
+//		if (a->errhndlr && (a->errhndlr(h, a->arg2) & RTNL_SUPPRESS_NLMSG_DONE_NLERR))
+//			return 0;
+
+		/* check for any messages returned from kernel */
+//		if (nl_dump_ext_ack_done(h, len))
+//			return len;
+
+		switch (errno) {
+		case ENOENT:
+		case EOPNOTSUPP:
+			return -1;
+		case EMSGSIZE:
+			fprintf(stderr,
+				"Error: Buffer too small for object.\n");
+			break;
+		default:
+			perror("RTNETLINK answers");
+		}
+		return len;
+	}
+
+	/* check for any messages returned from kernel */
+//	nl_dump_ext_ack(h, NULL);
+
+	return 0;
+}
+
+static int rtnl_dump_filter_l(struct rtnl_handle *rth,
+			      const struct rtnl_dump_filter_arg *arg)
+{
+	struct sockaddr_nl nladdr;
+	struct iovec iov;
+	struct msghdr msg = {
+		.msg_name = &nladdr,
+		.msg_namelen = sizeof(nladdr),
+		.msg_iov = &iov,
+		.msg_iovlen = 1,
+	};
+	char *buf;
+	int dump_intr = 0;
+
+	while (1) {
+		int status;
+		const struct rtnl_dump_filter_arg *a;
+		int found_done = 0;
+		int msglen = 0;
+
+		status = rtnl_recvmsg(rth->fd, &msg, &buf);
+		if (status < 0)
+			return status;
+
+//		if (rth->dump_fp)
+//			fwrite(buf, 1, NLMSG_ALIGN(status), rth->dump_fp);
+
+		for (a = arg; a->filter; a++) {
+			struct nlmsghdr *h = (struct nlmsghdr *)buf;
+
+			msglen = status;
+
+			while (NLMSG_OK(h, msglen)) {
+				int err = 0;
+
+				h->nlmsg_flags &= ~a->nc_flags;
+
+				if (nladdr.nl_pid != 0 ||
+				    h->nlmsg_pid != rth->local.nl_pid ||
+				    h->nlmsg_seq != rth->dump)
+					goto skip_it;
+
+				if (h->nlmsg_flags & NLM_F_DUMP_INTR)
+					dump_intr = 1;
+
+				if (h->nlmsg_type == NLMSG_DONE) {
+					err = rtnl_dump_done(h, a);
+					if (err < 0) {
+						free(buf);
+						return -1;
+					}
+
+					found_done = 1;
+					break; /* process next filter */
+				}
+
+				if (h->nlmsg_type == NLMSG_ERROR) {
+//					err = rtnl_dump_error(rth, h, a);
+//					if (err < 0) {
+//						free(buf);
+//						return -1;
+//					}
+
+					goto skip_it;
+				}
+
+//				if (!rth->dump_fp) {
+fprintf(stderr, "~~~ %s:%i: here, before filter()\n", __func__, __LINE__);
+					err = a->filter(h, a->arg1);
+fprintf(stderr, "~~~ %s:%i: here, after filter()\n", __func__, __LINE__);
+					if (err < 0) {
+						free(buf);
+						return err;
+					}
+//				}
+
+skip_it:
+				h = NLMSG_NEXT(h, msglen);
+			}
+		}
+		free(buf);
+
+		if (found_done) {
+			if (dump_intr)
+				fprintf(stderr,
+					"Dump was interrupted and may be inconsistent.\n");
+			return 0;
+		}
+
+		if (msg.msg_flags & MSG_TRUNC) {
+			fprintf(stderr, "Message truncated\n");
+			continue;
+		}
+		if (msglen) {
+			fprintf(stderr, "!!!Remnant of size %d\n", msglen);
+			exit(1);
+		}
+	}
+}
+
+int rtnl_dump_filter_nc(struct rtnl_handle *rth,
+			rtnl_filter_t filter,
+			void *arg1, __u16 nc_flags)
+{
+	const struct rtnl_dump_filter_arg a[] = {
+		{
+			.filter = filter, .arg1 = arg1,
+			.nc_flags = nc_flags,
+		},
+		{ },
+	};
+
+	return rtnl_dump_filter_l(rth, a);
+}
+
+#define rtnl_dump_filter(rth, filter, arg) \
+	rtnl_dump_filter_nc(rth, filter, arg, 0)
+
+
+
+//static void bridge_monitor_mdb_check(struct rtnl_handle *rth)
+static void bridge_monitor_mdb_check(void)
+{
+	static struct timespec last_checked = { .tv_sec = 0, .tv_nsec = 0 };
+	struct timespec cur_time;
+	int ret;
+
+	ret = clock_gettime(CLOCK_MONOTONIC_RAW, &cur_time);
+	if (ret < 0) {
+		perror("clock_gettime()");
+		exit(3);
+	}
+
+	/* not time to check yet */
+	if (last_checked.tv_sec &&
+	    last_checked.tv_sec + BRMMDB_CHECK_TIMEOUT >= cur_time.tv_sec)
+		return;
+
+	printf("~~~ %s:%i: going to update\n", __func__, __LINE__);
+	rth_dump.pre_dump_cb(rth_dump.bridge);
+
+	if (rtnl_mdbdump_req(&rth_dump, PF_BRIDGE) < 0) {
+		perror("Cannot send dump request");
+		return;
+	}
+
+	if (rtnl_dump_filter(&rth_dump, print_mdbs, &rth_dump) < 0) {
+		fprintf(stderr, "Dump terminated\n");
+		return;
+	}
+
+	ret = rth_dump.post_dump_cb(rth_dump.bridge);
+	if (ret) {
+		/* a listener was absent or deleted, early recheck */
+		last_checked.tv_sec = 0;
+		last_checked.tv_nsec = 0;
+		return;
+	}
+
+	last_checked = cur_time;
+}
+
+static int
+bridge_monitor_mdbdump_setup(struct rtnl_handle *rth,
+			     struct bridge *br,
+			     int (*update_cb)(struct bridge *br,
+					      int port_ifindex,
+					      __u16 nlmsg_type,
+					      int addr_family,
+					      const void *group),
+			     void (*pre_dump_cb)(struct bridge *br),
+			     int (*post_dump_cb)(struct bridge *br))
+{
+	int ret = rtnl_open(rth, 0);
+
+	rth->bridge = br;
+	rth->update_cb = update_cb;
+	rth->pre_dump_cb = pre_dump_cb;
+	rth->post_dump_cb = post_dump_cb;
+
+	return ret;
+}
+
+static int
+bridge_monitor_mdbmon_setup(struct rtnl_handle *rth,
+			    struct bridge *br,
+			    int (*update_cb)(struct bridge *br,
+					     int port_ifindex,
+					     __u16 nlmsg_type,
+					     int addr_family,
+					     const void *group))
+{
+	struct timeval timeval = { .tv_sec = BRMMDB_CHECK_TIME, .tv_usec = 0 };
+	unsigned int groups = nl_mgrp(RTNLGRP_MDB);
+	int ret = rtnl_open(rth, groups);
+
+	if (ret < 0)
+		return ret;
+
+	ret = setsockopt(rth->fd, SOL_SOCKET, SO_RCVTIMEO,
+			 &timeval, sizeof(timeval));
+	if (ret < 0) {
+		perror("SO_RCVTIMEO");
+		rtnl_close(rth);
+		return ret;
+	}
+
+	rth->bridge = br;
+	rth->update_cb = update_cb;
+	rth->pre_dump_cb = NULL;
+	rth->post_dump_cb = NULL;
+
+	return 0;
+}
+
+int bridge_monitor_mdb(int (*update_cb)(struct bridge *br,
 					int port_ifindex,
 					__u16 nlmsg_type,
 					int addr_family,
 					const void *group),
+		       void (*pre_dump_cb)(struct bridge *br),
+		       int (*post_dump_cb)(struct bridge *br),
 		       struct bridge *br)
 {
-	unsigned int groups = nl_mgrp(RTNLGRP_MDB);
-
-	if (rtnl_open(&rth, groups) < 0)
+	if (bridge_monitor_mdbdump_setup(&rth_dump, br, update_cb, pre_dump_cb, post_dump_cb) < 0)
 		exit(1);
 
-	rth.bridge = br;
-	rth.callback = callback;
-
-	if (rtnl_listen(&rth, accept_msg, stdout) < 0)
+	if (bridge_monitor_mdbmon_setup(&rth_mon, br, update_cb) < 0) {
+		rtnl_close(&rth_dump);
 		exit(2);
+	}
 
-	rtnl_close(&rth);
+	if (rtnl_listen(&rth_mon, accept_msg, &rth_mon) < 0) {
+		rtnl_close(&rth_mon);
+		rtnl_close(&rth_dump);
+		exit(3);
+	}
+
+	rtnl_close(&rth_mon);
+	rtnl_close(&rth_dump);
 
 	return 0;
 }

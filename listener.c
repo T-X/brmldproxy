@@ -13,6 +13,8 @@
 
 #include "brmldproxy.h"
 
+#define EXTRA_LIFES 2
+
 struct listener {
 	int sd;		// sd on the proxy port interface
 	int ifindex;	// the port where the listener originally came from
@@ -21,6 +23,7 @@ struct listener {
 		struct in6_addr ip6;
 	} group;
 	struct list_head node;
+	unsigned short extra_lifes;
 };
 
 struct filter {
@@ -104,8 +107,23 @@ static int listener_filter_check(struct bridge *br, int addr_family,
 	return MCAST_INCLUDE;
 }
 
-static void listener_add_v4(struct bridge *br, int ifindex, const struct in_addr *group)
+static int listener_add_v4(struct bridge *br, int ifindex, const struct in_addr *group)
 {
+	return 0;
+}
+
+static int listener_nudge_v6(struct list_head *list, const struct in6_addr *group)
+{
+	struct listener *listener;
+
+	list_for_each_entry(listener, list, node) {
+		if (!memcmp(group, &listener->group.ip6, sizeof(*group))) {
+			listener->extra_lifes = EXTRA_LIFES;
+			return 1;
+		}
+	}
+
+	return 0;
 }
 
 static int listener_create_socket_v6(int prifindex, const struct in6_addr *group)
@@ -164,6 +182,7 @@ static int listener_add_socket_v6(struct brport *port, int ifindex, int sd, cons
 	listener->sd = sd;
 	listener->ifindex = ifindex;
 	listener->group.ip6 = *group;
+	listener->extra_lifes = EXTRA_LIFES;
 	INIT_LIST_HEAD(&listener->node);
 
 	list_add_tail(&listener->node, &port->listener_list_v6);
@@ -171,7 +190,7 @@ static int listener_add_socket_v6(struct brport *port, int ifindex, int sd, cons
 	return 0;
 }
 
-static void listener_add_v6(struct bridge *br, int ifindex, const struct in6_addr *group)
+static int listener_add_v6(struct bridge *br, int ifindex, const struct in6_addr *group)
 {
 	struct brport *port;
 	int sd, ret;
@@ -181,41 +200,39 @@ static void listener_add_v6(struct bridge *br, int ifindex, const struct in6_add
 		if (port->ifindex == ifindex)
 			continue;
 
-		/* TODO: add assertion that listener does not exist yet */
-
 		if (list_empty(&port->listener_list_v6))
 			setup_proxy_port_tx_redir(br, port);
+		else if (listener_nudge_v6(&port->listener_list_v6, group))
+			/* already exists */
+			break;
 
 		sd = listener_create_socket_v6(port->prifindex, group);
 		if (sd < 0) {
 			fprintf(stderr, "Error: Could not create IPv6 multicast listening socket\n");
-			/* TODO: return error */
-			return;
+			return sd;
 		}
 
 		ret = listener_add_socket_v6(port, ifindex, sd, group);
 		if (ret < 0) {
 			fprintf(stderr, "Error: Could not add IPv6 multicast listening socket\n");
 			close(sd);
-			/* TODO: return error */
-			return;
+			return ret;
 		}
 		printf("~~~ %s:%i: listener added to port %i (%i) successfully: sd: %i\n", __func__, __LINE__, port->ifindex, port->prifindex, sd);
 	}
 	printf("~~~ %s:%i: end\n", __func__, __LINE__);
+	return 0;
 }
 
-static void listener_add(struct bridge *br, int port_ifindex, int addr_family, const void *group)
+static int listener_add(struct bridge *br, int port_ifindex, int addr_family, const void *group)
 {
 	switch (addr_family) {
 	case AF_INET:
-		listener_add_v4(br, port_ifindex, (const struct in_addr *)group);
-		break;
+		return listener_add_v4(br, port_ifindex, (const struct in_addr *)group);
 	case AF_INET6:
-		listener_add_v6(br, port_ifindex, (const struct in6_addr *)group);
-		break;
+		return listener_add_v6(br, port_ifindex, (const struct in6_addr *)group);
 	default:
-		return;
+		return -EINVAL;
 	}
 }
 
@@ -226,14 +243,17 @@ static void listener_purge(struct listener *listener)
 	free(listener);
 }
 
-static void listener_del_v4(struct bridge *br, int ifindex, const struct in_addr *group)
+static int listener_del_v4(struct bridge *br, int ifindex, const struct in_addr *group)
 {
+	return 0;
 }
 
-static void listener_del_v6(struct bridge *br, int ifindex, const struct in6_addr *group)
+static int listener_del_v6(struct bridge *br, int ifindex, const struct in6_addr *group)
 {
+	char groupstr[INET6_ADDRSTRLEN + 1];
 	struct listener *listener;
 	struct brport *port;
+	int found = 0;
 
 	list_for_each_entry(port, &br->proxied_ports_list, node) {
 		if (port->ifindex == ifindex)
@@ -243,53 +263,115 @@ static void listener_del_v6(struct bridge *br, int ifindex, const struct in6_add
 			if (memcmp(group, &listener->group.ip6, sizeof(*group)))
 				continue;
 
+			found = 1;
 			listener_purge(listener);
 			break;
 		}
 
+		if (!found &&
+		    inet_ntop(AF_INET6, group, groupstr, sizeof(groupstr)))
+			fprintf(stderr, "Warning: Could not find/delete listener %s?", groupstr);
+
 		if (list_empty(&port->listener_list_v6))
 			teardown_proxy_port_tx_redir(port);
 	}
+
+	return 0;
 }
 
-static void listener_del(struct bridge *br, int port_ifindex, int addr_family, const void *group)
+static int listener_del(struct bridge *br, int port_ifindex, int addr_family, const void *group)
 {
 	switch (addr_family) {
 	case AF_INET:
-		listener_del_v4(br, port_ifindex, (const struct in_addr *)group);
-		break;
+		return listener_del_v4(br, port_ifindex, (const struct in_addr *)group);
 	case AF_INET6:
-		listener_del_v6(br, port_ifindex, (const struct in6_addr *)group);
-		break;
+		return listener_del_v6(br, port_ifindex, (const struct in6_addr *)group);
 	default:
-		return;
+		return -EINVAL;
 	}
 }
 
-void listener_update(struct bridge *br, int br_ifindex, int port_ifindex, __u16 nlmsg_type, int addr_family, const void *group)
+int listener_update(struct bridge *br, int port_ifindex, __u16 nlmsg_type, int addr_family, const void *group)
 {
 	struct brport *port;
 	printf("~~~ %s:%i: start\n", __func__, __LINE__);
 
-	if (br->ifindex != br_ifindex)
-		return;
-
 	list_for_each_entry(port, &br->excluded_ports_list, node) {
 		if (port->ifindex == port_ifindex)
-			return;
+			return 0;
 	}
 
 	if (listener_filter_check(br, addr_family, group) == MCAST_EXCLUDE)
-		return;
+		return 0;
 
 	switch (nlmsg_type) {
+	case RTM_GETMDB:
 	case RTM_NEWMDB:
-		listener_add(br, port_ifindex, addr_family, group);
-		break;
+		return listener_add(br, port_ifindex, addr_family, group);
 	case RTM_DELMDB:
-		listener_del(br, port_ifindex, addr_family, group);
-		break;
+		return listener_del(br, port_ifindex, addr_family, group);
+	default:
+		return -EINVAL;
 	}
+}
+
+void listener_reduce_lifes(struct bridge *br)
+{
+	struct listener *listener;
+	struct brport *port;
+
+	list_for_each_entry(port, &br->proxied_ports_list, node) {
+		list_for_each_entry(listener, &port->listener_list_v4, node) {
+			/* sanity check, should not happen */
+			if (!listener->extra_lifes) {
+				fprintf(stderr, "Warning: ignoring reducing life on zombie\n");
+				return;
+			}
+
+			listener->extra_lifes--;
+		}
+
+		list_for_each_entry(listener, &port->listener_list_v6, node) {
+			/* sanity check, should not happen */
+			if (!listener->extra_lifes) {
+				fprintf(stderr, "Warning: unexpected zombie, ignoring to reduce life\n");
+				return;
+			}
+
+			listener->extra_lifes--;
+		}
+	}
+}
+
+int listener_flush_dead(struct bridge *br)
+{
+	struct listener *listener, *tmp;
+	struct brport *port;
+	int early_recheck = 0;
+
+	list_for_each_entry(port, &br->proxied_ports_list, node) {
+		list_for_each_entry_safe(listener, tmp, &port->listener_list_v4, node) {
+			if (listener->extra_lifes < EXTRA_LIFES)
+				early_recheck = 1;
+
+			if (listener->extra_lifes)
+				continue;
+
+			listener_purge(listener);
+		}
+
+		list_for_each_entry_safe(listener, tmp, &port->listener_list_v6, node) {
+			if (listener->extra_lifes < EXTRA_LIFES)
+				early_recheck = 1;
+
+			if (listener->extra_lifes)
+				continue;
+
+			listener_purge(listener);
+		}
+	}
+
+	return early_recheck;
 }
 
 void listener_flush(struct brport *port)

@@ -8,7 +8,9 @@
 
 #include "brmldproxy.h"
 
-void listener_update(struct bridge *br, int br_ifindex, int port_ifindex, __u16 nlmsg_type, int addr_family, const void *group);
+int listener_update(struct bridge *br, int port_ifindex, __u16 nlmsg_type, int addr_family, const void *group);
+void listener_reduce_lifes(struct bridge *br);
+int listener_flush_dead(struct bridge *br);
 void listener_flush(struct brport *port);
 int listener_filter_add_group(struct bridge *br,
 			      struct sockaddr_storage *group,

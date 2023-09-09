@@ -823,7 +823,7 @@ int main(int argc, char *argv[])
 	if (ret < 0)
 		goto out;
 
-	bridge_monitor_mdb(listener_update, &br);
+	bridge_monitor_mdb(listener_update, listener_reduce_lifes, listener_flush_dead, &br);
 
 out:
 	teardown_proxy_ports(&br);

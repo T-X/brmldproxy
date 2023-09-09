@@ -13,8 +13,8 @@
     -> workaround: put br0 into include instead of
        proxied list by default, disallow using
        "-p br0"
-[ ] fixup brmldproxy's listeners via (netlink of)
-    "bridge mdb show" (about every 60 seconds maybe?)
+[x] fixup brmldproxy's listeners via (netlink of)
+    "bridge mdb show" (about every 30 seconds maybe?)
     -> we don't get full MDB state on startup and
        maybe "bridge monitor mdb" might sometimes be
        out of order?

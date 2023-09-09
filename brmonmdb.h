@@ -6,12 +6,13 @@
 
 #include <linux/types.h> // __u16
 
-int bridge_monitor_mdb(void (*callback)(struct bridge *br,
-					int br_ifindex,
+int bridge_monitor_mdb(int (*update_cb)(struct bridge *br,
 					int port_ifindex,
 					__u16 nlmsg_type,
 					int addr_family,
 					const void *group),
+		       void (*pre_dump_cb)(struct bridge *br),
+		       int (*post_dump_cb)(struct bridge *br),
 		       struct bridge *br);
 
 void bridge_monitor_mdb_shutdown(void);
