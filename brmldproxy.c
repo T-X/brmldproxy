@@ -487,6 +487,14 @@ static int get_args_final(struct bridge *br, struct list_head *ports, int argc, 
 				return ret;
 			break;
 		case 'p':
+			/* TODO: br0 as proxied port currently unsupported/buggy,
+			 * might need adjusted tc rules to work?
+			 */
+			if (!strcmp(optarg, br->name)) {
+				fprintf(stderr, "Error: bridge device as proxied port currently unsupported\n");
+				return -EINVAL;
+			}
+
 			to = &br->proxied_ports_list;
 			ret = migrate_port_to_list(ports, to, optarg);
 			if (ret < 0)
@@ -513,6 +521,16 @@ static int get_args_final(struct bridge *br, struct list_head *ports, int argc, 
 			/* already parsed previously */
 			break;
 		}
+	}
+
+	if (ports == &br->proxied_ports_list) {
+		/* TODO: br0 as proxied port currently unsupported/buggy,
+		 * might need adjusted tc rules to work?
+		 */
+		to = &br->included_ports_list;
+		ret = migrate_port_to_list(ports, to, br->name);
+		if (ret < 0)
+			return ret;
 	}
 
 	return 0;

@@ -5,6 +5,14 @@
        loses MDB entries from veth0
     -> setup_proxy_port_tx() prevents
        MLD queries from appearing on veth1(<-veth0)
+[ ] BUG: br0 as proxied port is not working
+    -> listener from another proxied port
+       appears directly br0 in bridge MDB
+       (but not in "ip maddr show")
+    -> does it need other tc rules?
+    -> workaround: put br0 into include instead of
+       proxied list by default, disallow using
+       "-p br0"
 [ ] fixup brmldproxy's listeners via (netlink of)
     "bridge mdb show" (about every 60 seconds maybe?)
     -> we don't get full MDB state on startup and
