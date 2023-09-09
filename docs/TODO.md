@@ -1,5 +1,10 @@
 # TODOs
 
+[x] BUG: br0(i) { veth0(p) }, querier on br0
+    -> once brmldproxy is started, the bridge
+       loses MDB entries from veth0
+    -> setup_proxy_port_tx() prevents
+       MLD queries from appearing on veth1(<-veth0)
 [ ] fixup brmldproxy's listeners via (netlink of)
     "bridge mdb show" (about every 60 seconds maybe?)
     -> we don't get full MDB state on startup and
