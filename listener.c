@@ -420,3 +420,29 @@ int listener_filter_add_group(struct bridge *br,
 
 	return -EINVAL;
 }
+
+void listener_dump(struct bridge *br)
+{
+	char groupstr[INET6_ADDRSTRLEN + 1];
+	struct listener *listener;
+	char ifname[IFNAMSIZ];
+	struct brport *port;
+
+	printf("Proxied listeners for %s:\n", br->name);
+	list_for_each_entry(port, &br->proxied_ports_list, node) {
+		printf("\t%s:\n", port->name);
+		list_for_each_entry(listener, &port->listener_list_v6, node) {
+			if (!inet_ntop(AF_INET6, &listener->group.ip6, groupstr, sizeof(groupstr))) {
+				fprintf(stderr, "Error: Could get group for listener dump");
+				return;
+			}
+
+			if (!if_indextoname(listener->ifindex, ifname)) {
+				fprintf(stderr, "Error: Could get interface name for listener dump");
+				return;
+			}
+
+			printf("\t\t%s (%s)\n", groupstr, ifname);
+		}
+	}
+}

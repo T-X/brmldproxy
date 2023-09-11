@@ -16,5 +16,6 @@ int listener_filter_add_group(struct bridge *br,
 			      struct sockaddr_storage *group,
 			      struct sockaddr_storage *mask,
 			      int mode);
+void listener_dump(struct bridge *br);
 
 #endif /* __LISTENER_H__ */

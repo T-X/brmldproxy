@@ -13,8 +13,10 @@ int bridge_monitor_mdb(int (*update_cb)(struct bridge *br,
 					const void *group),
 		       void (*pre_dump_cb)(struct bridge *br),
 		       int (*post_dump_cb)(struct bridge *br),
+		       void (*status_dump_cb)(struct bridge *br),
 		       struct bridge *br);
 
 void bridge_monitor_mdb_shutdown(void);
+void bridge_monitor_mdb_status(void);
 
 #endif /* __BRMONMDB_H__ */

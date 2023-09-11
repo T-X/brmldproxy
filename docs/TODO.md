@@ -73,6 +73,6 @@
 [ ] avoid (reduce?) sending unsolicited MLD reports on proxied ports, if no MLD
     querier is present
 [ ] write some tests
-[ ] add a SIGHUP handle which dumps current internal state
+[x] add a SIGUSR1 handle which dumps current internal state
     (for debugging purposes, easier overview than looking at
      "ip maddr show" and "bridge -d mdb show"

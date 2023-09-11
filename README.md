@@ -90,6 +90,13 @@ in the ff02:1111::/32 range that are allowed, with the
 more specific exeception to the exception that the address
 ff02:1111::1234 is disallowed.
 
+## Signals
+
+* SIGINT/SIGHUP/SIGTERM: trigger a clean shutdown
+* SIGUSR1: dumps listener status to stdout.
+  This will list the listener groups which a proxied port will
+  send (an) IGMP/MLD report(s) for.
+
 ## TODOs
 
 See [TODO.md](./docs/TODO.md).

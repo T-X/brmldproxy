@@ -28,6 +28,7 @@
 #include "brmldproxy.h"
 
 static int running = 1;
+static int status_dump = 0;
 
 #define BRMMDB_CHECK_TIME 3
 #define BRMMDB_CHECK_TIMEOUT 30
@@ -77,6 +78,7 @@ struct rtnl_handle {
 					     const void *group);
 	void			(*pre_dump_cb)(struct bridge *br);
 	int			(*post_dump_cb)(struct bridge *br);
+	void			(*status_dump_cb)(struct bridge *br);
 };
 
 static void bridge_monitor_mdb_check(void);
@@ -209,6 +211,11 @@ int rtnl_listen(struct rtnl_handle *rtnl,
 
 		iov.iov_len = sizeof(buf);
 		status = recvmsg(rtnl->fd, &msg, 0);
+
+		if (status_dump && rtnl->status_dump_cb) {
+			rtnl->status_dump_cb(rtnl->bridge);
+			status_dump = 0;
+		}
 
 		if (status < 0) {
 			if (errno == EINTR || errno == EAGAIN)
@@ -959,7 +966,8 @@ bridge_monitor_mdbmon_setup(struct rtnl_handle *rth,
 					     int port_ifindex,
 					     __u16 nlmsg_type,
 					     int addr_family,
-					     const void *group))
+					     const void *group),
+			    void (*status_dump_cb)(struct bridge *br))
 {
 	struct timeval timeval = { .tv_sec = BRMMDB_CHECK_TIME, .tv_usec = 0 };
 	unsigned int groups = nl_mgrp(RTNLGRP_MDB);
@@ -980,6 +988,7 @@ bridge_monitor_mdbmon_setup(struct rtnl_handle *rth,
 	rth->update_cb = update_cb;
 	rth->pre_dump_cb = NULL;
 	rth->post_dump_cb = NULL;
+	rth->status_dump_cb = status_dump_cb;
 
 	return 0;
 }
@@ -991,12 +1000,13 @@ int bridge_monitor_mdb(int (*update_cb)(struct bridge *br,
 					const void *group),
 		       void (*pre_dump_cb)(struct bridge *br),
 		       int (*post_dump_cb)(struct bridge *br),
+		       void (*status_dump_cb)(struct bridge *br),
 		       struct bridge *br)
 {
 	if (bridge_monitor_mdbdump_setup(&rth_dump, br, update_cb, pre_dump_cb, post_dump_cb) < 0)
 		exit(1);
 
-	if (bridge_monitor_mdbmon_setup(&rth_mon, br, update_cb) < 0) {
+	if (bridge_monitor_mdbmon_setup(&rth_mon, br, update_cb, status_dump_cb) < 0) {
 		rtnl_close(&rth_dump);
 		exit(2);
 	}
@@ -1015,4 +1025,8 @@ int bridge_monitor_mdb(int (*update_cb)(struct bridge *br,
 
 void bridge_monitor_mdb_shutdown(void) {
 	running = 0;
+}
+
+void bridge_monitor_mdb_status(void) {
+	status_dump = 1;
 }

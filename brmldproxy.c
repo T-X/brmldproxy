@@ -53,16 +53,21 @@
 
 #define PD_FWMARK "0x0800000"
 
-void signal_handler(int signum)
+void signal_handler_shutdown(int signum)
 {
 	bridge_monitor_mdb_shutdown();
+}
+
+void signal_handler_status(int signum)
+{
+	bridge_monitor_mdb_status();
 }
 
 void setup_signal_handler(void)
 {
 	struct sigaction new_action, old_action;
 
-	new_action.sa_handler = &signal_handler;
+	new_action.sa_handler = &signal_handler_shutdown;
 	sigemptyset(&new_action.sa_mask);
 	new_action.sa_flags = 0;
 
@@ -77,6 +82,12 @@ void setup_signal_handler(void)
 	sigaction(SIGTERM, NULL, &old_action);
 	if (old_action.sa_handler != SIG_IGN)
 		sigaction(SIGTERM, &new_action, NULL);
+
+	sigaction(SIGUSR1, NULL, &old_action);
+	if (old_action.sa_handler != SIG_IGN) {
+		new_action.sa_handler = &signal_handler_status;
+		sigaction(SIGUSR1, &new_action, NULL);
+	}
 }
 
 static void usage()
@@ -823,7 +834,7 @@ int main(int argc, char *argv[])
 	if (ret < 0)
 		goto out;
 
-	bridge_monitor_mdb(listener_update, listener_reduce_lifes, listener_flush_dead, &br);
+	bridge_monitor_mdb(listener_update, listener_reduce_lifes, listener_flush_dead, listener_dump, &br);
 
 out:
 	teardown_proxy_ports(&br);
