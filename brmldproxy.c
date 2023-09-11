@@ -584,6 +584,25 @@ static int parse_args(struct bridge *br, int argc, char *argv[])
 	return 0;
 }
 
+static void print_port_config(struct bridge *br)
+{
+	struct brport *port;
+
+	printf("Port configuration for %s:\n", br->name);
+	printf("* included:\n");
+	list_for_each_entry(port, &br->included_ports_list, node) {
+		printf("\t%s\n", port->name);
+	}
+	printf("* excluded:\n");
+	list_for_each_entry(port, &br->excluded_ports_list, node) {
+		printf("\t%s\n", port->name);
+	}
+	printf("* proxied:\n");
+	list_for_each_entry(port, &br->proxied_ports_list, node) {
+		printf("\t%s\n", port->name);
+	}
+}
+
 static int system_format(const char *format, ...)
 {
 	char cmd[256];
@@ -805,7 +824,6 @@ static void teardown_proxy_ports(struct bridge *br)
 
 int main(int argc, char *argv[])
 {
-	struct brport *port;
 	struct bridge br;
 	int ret = 0;
 
@@ -815,20 +833,7 @@ int main(int argc, char *argv[])
 	if (ret < 0)
 		goto err;
 
-	printf("Got bridge: %s\n", br.name);
-
-	printf("included_ports_list on %s:\n", br.name);
-	list_for_each_entry(port, &br.included_ports_list, node) {
-		printf("    %s (%u)\n", port->name, port->ifindex);
-	}
-	printf("excluded_ports_list on %s:\n", br.name);
-	list_for_each_entry(port, &br.excluded_ports_list, node) {
-		printf("    %s (%u)\n", port->name, port->ifindex);
-	}
-	printf("proxied_ports_list on %s:\n", br.name);
-	list_for_each_entry(port, &br.proxied_ports_list, node) {
-		printf("    %s (%u)\n", port->name, port->ifindex);
-	}
+	print_port_config(&br);
 
 	ret = setup_proxy_ports(&br);
 	if (ret < 0)
