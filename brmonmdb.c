@@ -95,8 +95,9 @@ static inline __u32 nl_mgrp(__u32 group)
 	return group ? (1 << (group - 1)) : 0;
 }
 
-int rtnl_open_byproto(struct rtnl_handle *rth, unsigned int subscriptions,
-		      int protocol)
+static int
+rtnl_open_byproto(struct rtnl_handle *rth, unsigned int subscriptions,
+		  int protocol)
 {
 	socklen_t addr_len;
 	int sndbuf = 32768;
@@ -155,13 +156,13 @@ int rtnl_open_byproto(struct rtnl_handle *rth, unsigned int subscriptions,
 	return 0;
 }
 
-int rtnl_open(struct rtnl_handle *rth, unsigned int subscriptions)
+static int rtnl_open(struct rtnl_handle *rth, unsigned int subscriptions)
 {
 	return rtnl_open_byproto(rth, subscriptions, NETLINK_ROUTE);
 }
 
 /* Older kernels may not support strict dump and filtering */
-void rtnl_set_strict_dump(struct rtnl_handle *rth)
+static void rtnl_set_strict_dump(struct rtnl_handle *rth)
 {
 	int one = 1;
 
@@ -172,9 +173,9 @@ void rtnl_set_strict_dump(struct rtnl_handle *rth)
 	rth->flags |= RTNL_HANDLE_F_STRICT_CHK;
 }
 
-int rtnl_listen(struct rtnl_handle *rtnl,
-		rtnl_listen_filter_t handler,
-		void *jarg)
+static int rtnl_listen(struct rtnl_handle *rtnl,
+		       rtnl_listen_filter_t handler,
+		       void *jarg)
 {
 	int status;
 	struct nlmsghdr *h;
@@ -281,7 +282,7 @@ int rtnl_listen(struct rtnl_handle *rtnl,
 	return 0;
 }
 
-void rtnl_close(struct rtnl_handle *rth)
+static void rtnl_close(struct rtnl_handle *rth)
 {
 	if (rth->fd >= 0) {
 		close(rth->fd);
@@ -289,8 +290,8 @@ void rtnl_close(struct rtnl_handle *rth)
 	}
 }
 
-int parse_rtattr_flags(struct rtattr *tb[], int max, struct rtattr *rta,
-		       int len, unsigned short flags)
+static int parse_rtattr_flags(struct rtattr *tb[], int max, struct rtattr *rta,
+			      int len, unsigned short flags)
 {
 	unsigned short type;
 
@@ -307,7 +308,7 @@ int parse_rtattr_flags(struct rtattr *tb[], int max, struct rtattr *rta,
 	return 0;
 }
 
-int parse_rtattr(struct rtattr *tb[], int max, struct rtattr *rta, int len)
+static int parse_rtattr(struct rtattr *tb[], int max, struct rtattr *rta, int len)
 {
 	return parse_rtattr_flags(tb, max, rta, len, 0);
 }
@@ -338,8 +339,8 @@ static int __parse_mdb_nlmsg(struct nlmsghdr *n, struct rtattr **tb)
 	return 1;
 }
 
-const char *rt_addr_n2a_r(int af, int len,
-			  const void *addr, char *buf, int buflen)
+static const char *rt_addr_n2a_r(int af, int len,
+				 const void *addr, char *buf, int buflen)
 {
 	switch (af) {
 	case AF_INET:
@@ -488,7 +489,7 @@ static int accept_msg(struct rtnl_ctrl_data *ctrl,
 	return 0;
 }
 
-int rtnl_mdbdump_req(struct rtnl_handle *rth, int family)
+static int rtnl_mdbdump_req(struct rtnl_handle *rth, int family)
 {
 	struct {
 		struct nlmsghdr nlh;
@@ -726,7 +727,7 @@ skip_it:
 	}
 }
 
-int rtnl_dump_filter_nc(struct rtnl_handle *rth,
+static int rtnl_dump_filter_nc(struct rtnl_handle *rth,
 			rtnl_filter_t filter,
 			void *arg1, __u16 nc_flags)
 {
