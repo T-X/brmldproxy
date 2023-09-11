@@ -112,12 +112,13 @@ static int listener_add_v4(struct bridge *br, int ifindex, const struct in_addr 
 	return 0;
 }
 
-static int listener_nudge_v6(struct list_head *list, const struct in6_addr *group)
+static int listener_nudge_v6(struct list_head *list, const struct in6_addr *group, int ifindex)
 {
 	struct listener *listener;
 
 	list_for_each_entry(listener, list, node) {
-		if (!memcmp(group, &listener->group.ip6, sizeof(*group))) {
+		if (listener->ifindex == ifindex &&
+		    !memcmp(group, &listener->group.ip6, sizeof(*group))) {
 			listener->extra_lifes = EXTRA_LIFES;
 			return 1;
 		}
@@ -202,7 +203,7 @@ static int listener_add_v6(struct bridge *br, int ifindex, const struct in6_addr
 
 		if (list_empty(&port->listener_list_v6))
 			setup_proxy_port_tx_redir(br, port);
-		else if (listener_nudge_v6(&port->listener_list_v6, group))
+		else if (listener_nudge_v6(&port->listener_list_v6, group, ifindex))
 			/* already exists */
 			break;
 
@@ -260,7 +261,8 @@ static int listener_del_v6(struct bridge *br, int ifindex, const struct in6_addr
 			continue;
 	
 		list_for_each_entry(listener, &port->listener_list_v6, node) {
-			if (memcmp(group, &listener->group.ip6, sizeof(*group)))
+			if (listener->ifindex != ifindex ||
+			    memcmp(group, &listener->group.ip6, sizeof(*group)))
 				continue;
 
 			found = 1;
