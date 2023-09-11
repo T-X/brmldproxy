@@ -801,6 +801,8 @@ bridge_monitor_mdbdump_setup(struct rtnl_handle *rth,
 {
 	int ret = rtnl_open(rth, 0);
 
+	rtnl_set_strict_dump(rth);
+
 	rth->bridge = br;
 	rth->update_cb = update_cb;
 	rth->pre_dump_cb = pre_dump_cb;
