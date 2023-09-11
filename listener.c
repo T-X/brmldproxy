@@ -204,7 +204,7 @@ static int listener_add_v6(struct bridge *br, int ifindex, const struct in6_addr
 			setup_proxy_port_tx_redir(br, port);
 		else if (listener_nudge_v6(&port->listener_list_v6, group, ifindex))
 			/* already exists */
-			break;
+			continue;
 
 		sd = listener_create_socket_v6(port->prifindex, group);
 		if (sd < 0) {
