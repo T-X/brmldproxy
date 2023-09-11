@@ -3,14 +3,13 @@
 /*
  * brmonitor.c		"bridge monitor"
  *
- *		This program is free software; you can redistribute it and/or
- *		modify it under the terms of the GNU General Public License
- *		as published by the Free Software Foundation; either version
- *		2 of the License, or (at your option) any later version.
- *
- * Authors:	Stephen Hemminger <shemminger@vyatta.com>
  *
  * Originally from the iproute2's bridge tool, adopted for brmldproxy.
+ *
+ * iproute2's bridge.c:
+ *   Authors:	Stephen Hemminger <shemminger@vyatta.com>
+ * iproute2's libnetlink.c
+ *   Authors:	Alexey Kuznetsov, <kuznet@ms2.inr.ac.ru>
  */
 
 #include <linux/netlink.h>
@@ -33,13 +32,6 @@ static int status_dump = 0;
 #define BRMMDB_CHECK_TIME 3
 #define BRMMDB_CHECK_TIMEOUT 30
 
-/*#include "libnetlink.h"
-//#include "utils.h"
-
-//#ifndef NDA_RTA
-//#define NDA_RTA(r) \
-//	((struct rtattr *)(((char *)(r)) + NLMSG_ALIGN(sizeof(struct ndmsg))))
-//#endif*/
 
 #define MDB_RTA(r) \
 		((struct rtattr *)(((char *)(r)) + RTA_ALIGN(sizeof(struct br_mdb_entry))))
@@ -64,12 +56,12 @@ struct rtnl_handle {
 	__u32			seq;
 	__u32			dump;
 	int			proto;
-//	FILE		       *dump_fp;
 #define RTNL_HANDLE_F_LISTEN_ALL_NSID		0x01
 #define RTNL_HANDLE_F_SUPPRESS_NLERR		0x02
 #define RTNL_HANDLE_F_STRICT_CHK		0x04
 	int			flags;
 
+	/* additions for brmonmdb.c: */
 	struct bridge		*bridge;
 	int			(*update_cb)(struct bridge *br,
 					     int port_ifindex,
@@ -207,11 +199,13 @@ int rtnl_listen(struct rtnl_handle *rtnl,
 			msg.msg_controllen = sizeof(cmsgbuf);
 		}
 
+		/* addition for brmonmdb.c: */
 		bridge_monitor_mdb_check();
 
 		iov.iov_len = sizeof(buf);
 		status = recvmsg(rtnl->fd, &msg, 0);
 
+		/* additions for brmonmdb.c: */
 		if (status_dump && rtnl->status_dump_cb) {
 			rtnl->status_dump_cb(rtnl->bridge);
 			status_dump = 0;
@@ -339,9 +333,6 @@ static int __parse_mdb_nlmsg(struct nlmsghdr *n, struct rtattr **tb)
 		return -1;
 	}
 
-//	if (filter_index && filter_index != r->ifindex)
-//		return 0;
-
 	parse_rtattr(tb, MDBA_MAX, MDBA_RTA(r), n->nlmsg_len - NLMSG_LENGTH(sizeof(*r)));
 
 	return 1;
@@ -354,13 +345,8 @@ const char *rt_addr_n2a_r(int af, int len,
 	case AF_INET:
 	case AF_INET6:
 		return inet_ntop(af, addr, buf, buflen);
-//	case AF_MPLS:
-//		return mpls_ntop(af, addr, buf, buflen);
-//	case AF_PACKET:
-//		return ll_addr_n2a(addr, len, ARPHRD_VOID, buf, buflen);
 	case AF_BRIDGE:
 	{
-		printf("~~~ %s:%i: AF_BRIDGE\n", __func__, __LINE__);
 		const union {
 			struct sockaddr sa;
 			struct sockaddr_in sin;
@@ -391,17 +377,11 @@ static inline __u8 rta_getattr_u8(const struct rtattr *rta)
 static void print_mdb_entry(struct rtnl_handle *rth, int ifindex, const struct br_mdb_entry *e,
 			    struct nlmsghdr *n, struct rtattr **tb)
 {
-//	const void *grp, *src;
 	const void *grp;
 	const char *addr;
-//	SPRINT_BUF(abuf);
 	char abuf[64];
 	__u8 mode;
-//	const char *dev;
 	int af;
-
-//	if (filter_vlan && e->vid != filter_vlan)
-//		return;
 
 	if (!e->addr.proto) {
 		af = AF_PACKET;
@@ -413,24 +393,11 @@ static void print_mdb_entry(struct rtnl_handle *rth, int ifindex, const struct b
 		af = AF_INET6;
 		grp = &e->addr.u.ip6;
 	}
-//	dev = ll_index_to_name(ifindex);
 
-/*	open_json_object(NULL);
-
-	print_int(PRINT_JSON, "index", NULL, ifindex);
-	print_color_string(PRINT_ANY, COLOR_IFNAME, "dev", "dev %s", dev);
-	print_string(PRINT_ANY, "port", " port %s",
-		     ll_index_to_name(e->ifindex));
-*/
 	/* The ETH_ALEN argument is ignored for all cases but AF_PACKET */
 	addr = rt_addr_n2a_r(af, ETH_ALEN, grp, abuf, sizeof(abuf));
 	if (!addr)
 		return;
-
-/*	if (tb && tb[MDBA_MDB_EATTR_SOURCE]) {
-		src = (const void *)RTA_DATA(tb[MDBA_MDB_EATTR_SOURCE]);
-		inet_ntop(af, src, abuf, sizeof(abuf));
-	}*/
 
 	if (tb && tb[MDBA_MDB_EATTR_GROUP_MODE]) {
 		mode = rta_getattr_u8(tb[MDBA_MDB_EATTR_GROUP_MODE]);
@@ -449,10 +416,8 @@ static void print_mdb_entry(struct rtnl_handle *rth, int ifindex, const struct b
 			return;
 	}
 
-
 	if (rth == &rth_dump && n->nlmsg_type != RTM_GETMDB) {
-		//fprintf(stderr, "Warning: MDB dump with unexpected type, ignoring\n");
-		fprintf(stderr, "Warning: MDB dump with unexpected type (%hu, ignoring\n", n->nlmsg_type);
+		fprintf(stderr, "Warning: MDB dump with unexpected type (%hu), ignoring\n", n->nlmsg_type);
 		return;
 	}
 
@@ -460,74 +425,6 @@ static void print_mdb_entry(struct rtnl_handle *rth, int ifindex, const struct b
 		return;
 
 	rth->update_cb(rth->bridge, e->ifindex, n->nlmsg_type, af, grp);
-
-/*	print_color_string(PRINT_ANY, ifa_family_color(af),
-			    "grp", " grp %s", addr);
-
-	if (tb && tb[MDBA_MDB_EATTR_SOURCE]) {
-		src = (const void *)RTA_DATA(tb[MDBA_MDB_EATTR_SOURCE]);
-		print_color_string(PRINT_ANY, ifa_family_color(af),
-				   "src", " src %s",
-				   inet_ntop(af, src, abuf, sizeof(abuf)));
-	}
-	print_string(PRINT_ANY, "state", " %s",
-			   (e->state & MDB_PERMANENT) ? "permanent" : "temp");
-	if (show_details && tb) {
-		if (tb[MDBA_MDB_EATTR_GROUP_MODE]) {
-			__u8 mode = rta_getattr_u8(tb[MDBA_MDB_EATTR_GROUP_MODE]);
-
-			print_string(PRINT_ANY, "filter_mode", " filter_mode %s",
-				     mode == MCAST_INCLUDE ? "include" :
-							     "exclude");
-		}
-		if (tb[MDBA_MDB_EATTR_SRC_LIST]) {
-			struct rtattr *i, *attr = tb[MDBA_MDB_EATTR_SRC_LIST];
-			const char *sep = " ";
-			int rem;
-
-			open_json_array(PRINT_ANY, is_json_context() ?
-								"source_list" :
-								" source_list");
-			rem = RTA_PAYLOAD(attr);
-			for (i = RTA_DATA(attr); RTA_OK(i, rem);
-			     i = RTA_NEXT(i, rem)) {
-				print_src_entry(i, af, sep);
-				sep = ",";
-			}
-			close_json_array(PRINT_JSON, NULL);
-		}
-		if (tb[MDBA_MDB_EATTR_RTPROT]) {
-			__u8 rtprot = rta_getattr_u8(tb[MDBA_MDB_EATTR_RTPROT]);
-			SPRINT_BUF(rtb);
-
-			print_string(PRINT_ANY, "protocol", " proto %s ",
-				     rtnl_rtprot_n2a(rtprot, rtb, sizeof(rtb)));
-		}
-	}*/
-
-/*	open_json_array(PRINT_JSON, "flags");
-	if (e->flags & MDB_FLAGS_OFFLOAD)
-		print_string(PRINT_ANY, NULL, " %s", "offload");
-	if (e->flags & MDB_FLAGS_FAST_LEAVE)
-		print_string(PRINT_ANY, NULL, " %s", "fast_leave");
-	if (e->flags & MDB_FLAGS_STAR_EXCL)
-		print_string(PRINT_ANY, NULL, " %s", "added_by_star_ex");
-	if (e->flags & MDB_FLAGS_BLOCKED)
-		print_string(PRINT_ANY, NULL, " %s", "blocked");
-	close_json_array(PRINT_JSON, NULL);*/
-
-/*	if (e->vid)
-		print_uint(PRINT_ANY, "vid", " vid %u", e->vid);
-
-	if (show_stats && tb && tb[MDBA_MDB_EATTR_TIMER]) {
-		__u32 timer = rta_getattr_u32(tb[MDBA_MDB_EATTR_TIMER]);
-
-		print_string(PRINT_ANY, "timer", " %s",
-			     format_timer(timer, 1));
-	}
-
-	print_nl();
-	close_json_object();*/
 }
 
 static void br_print_mdb_entry(struct rtnl_handle *rth, int ifindex, struct rtattr *attr,
@@ -567,16 +464,9 @@ static int accept_msg(struct rtnl_ctrl_data *ctrl,
 	int ret;
 	struct rtattr *tb[NDA_MAX+1];
 
-	printf("Got message\n");
-
-//	printf("~~~ : &fp: %p\n", fp);
-
 	switch (n->nlmsg_type) {
 	case RTM_NEWMDB:
-		printf("New MDB entry: ...\n");
-		break;
 	case RTM_DELMDB:
-		printf("Deleted MDB entry: ...\n");
 		break;
 	default:
 		return 0;
@@ -588,42 +478,12 @@ static int accept_msg(struct rtnl_ctrl_data *ctrl,
 		return -1;
 	}
 
-//	if (r->ndm_family != AF_BRIDGE)
-//		return 0;
-
-//	if (filter_index && filter_index != r->ndm_ifindex)
-//		return 0;
-
-//	if (filter_state && !(r->ndm_state & filter_state))
-//		return 0;
-
-//	parse_rtattr(tb, NDA_MAX, NDA_RTA(r),
-//		     n->nlmsg_len - NLMSG_LENGTH(sizeof(*r)));
-
 	ret = __parse_mdb_nlmsg(n, tb);
 	if (ret != 1)
 		return ret;
 
 	if (tb[MDBA_MDB])
 		print_mdb_entries(rth, n, r->ifindex, tb[MDBA_MDB]);
-
-//	if (tb[MDBA_ROUTER])
-//		print_router_entries(fp, n, r->ifindex, tb[MDBA_ROUTER]);
-
-//	if (tb[NDA_LLADDR]) {
-//		const unsigned char *addr = RTA_DATA(tb[NDA_LLADDR]);
-//		int alen = RTA_PAYLOAD(tb[NDA_LLADDR]);
-//		char b1[strlen("00:11:22:33:44:55") + 1];
-//		int i, l;
-//
-//		memset(b1, 0, sizeof(b1));
-//
-//		snprintf(b1, sizeof(b1), "%02x", addr[0]);
-//		for (i = 1, l = 2; i < alen && l < sizeof(b1); i++, l += 3)
-//			snprintf(b1 + l, sizeof(b1) - l, ":%02x", addr[i]);
-//
-//		printf("MAC: %s\n", b1);
-//	}
 
 	return 0;
 }
@@ -797,9 +657,6 @@ static int rtnl_dump_filter_l(struct rtnl_handle *rth,
 		if (status < 0)
 			return status;
 
-//		if (rth->dump_fp)
-//			fwrite(buf, 1, NLMSG_ALIGN(status), rth->dump_fp);
-
 		for (a = arg; a->filter; a++) {
 			struct nlmsghdr *h = (struct nlmsghdr *)buf;
 
@@ -839,13 +696,11 @@ static int rtnl_dump_filter_l(struct rtnl_handle *rth,
 					goto skip_it;
 				}
 
-//				if (!rth->dump_fp) {
-					err = a->filter(h, a->arg1);
-					if (err < 0) {
-						free(buf);
-						return err;
-					}
-//				}
+				err = a->filter(h, a->arg1);
+				if (err < 0) {
+					free(buf);
+					return err;
+				}
 
 skip_it:
 				h = NLMSG_NEXT(h, msglen);
@@ -889,9 +744,10 @@ int rtnl_dump_filter_nc(struct rtnl_handle *rth,
 #define rtnl_dump_filter(rth, filter, arg) \
 	rtnl_dump_filter_nc(rth, filter, arg, 0)
 
+////////////////////
 
+/* additions for brmonmdb.c: */
 
-//static void bridge_monitor_mdb_check(struct rtnl_handle *rth)
 static void bridge_monitor_mdb_check(void)
 {
 	static struct timespec last_checked = { .tv_sec = 0, .tv_nsec = 0 };
