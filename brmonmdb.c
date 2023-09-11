@@ -456,9 +456,6 @@ static void print_mdb_entry(struct rtnl_handle *rth, int ifindex, const struct b
 		return;
 	}
 
-	printf("~~~ br-ifindex: %i, port-ifindex: %i, grp: %s, af: %i\n", ifindex, e->ifindex, addr, af);
-	//printf("~~~ %s:%i: &rntl_handle: %p, &rth: %p\n", __func__, __LINE__, rtnl_handle, &rth);
-	//printf("~~~ %s:%i: &rth_mon: %p\n", __func__, __LINE__, &rth_mon);
 	if (rth->bridge->ifindex != ifindex)
 		return;
 
@@ -843,9 +840,7 @@ static int rtnl_dump_filter_l(struct rtnl_handle *rth,
 				}
 
 //				if (!rth->dump_fp) {
-fprintf(stderr, "~~~ %s:%i: here, before filter()\n", __func__, __LINE__);
 					err = a->filter(h, a->arg1);
-fprintf(stderr, "~~~ %s:%i: here, after filter()\n", __func__, __LINE__);
 					if (err < 0) {
 						free(buf);
 						return err;
@@ -914,7 +909,6 @@ static void bridge_monitor_mdb_check(void)
 	    last_checked.tv_sec + BRMMDB_CHECK_TIMEOUT >= cur_time.tv_sec)
 		return;
 
-	printf("~~~ %s:%i: going to update\n", __func__, __LINE__);
 	rth_dump.pre_dump_cb(rth_dump.bridge);
 
 	if (rtnl_mdbdump_req(&rth_dump, PF_BRIDGE) < 0) {

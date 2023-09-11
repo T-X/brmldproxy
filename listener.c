@@ -196,7 +196,6 @@ static int listener_add_v6(struct bridge *br, int ifindex, const struct in6_addr
 	struct brport *port;
 	int sd, ret;
 
-	printf("~~~ %s:%i: start\n", __func__, __LINE__);
 	list_for_each_entry(port, &br->proxied_ports_list, node) {
 		if (port->ifindex == ifindex)
 			continue;
@@ -219,9 +218,8 @@ static int listener_add_v6(struct bridge *br, int ifindex, const struct in6_addr
 			close(sd);
 			return ret;
 		}
-		printf("~~~ %s:%i: listener added to port %i (%i) successfully: sd: %i\n", __func__, __LINE__, port->ifindex, port->prifindex, sd);
 	}
-	printf("~~~ %s:%i: end\n", __func__, __LINE__);
+
 	return 0;
 }
 
@@ -296,7 +294,6 @@ static int listener_del(struct bridge *br, int port_ifindex, int addr_family, co
 int listener_update(struct bridge *br, int port_ifindex, __u16 nlmsg_type, int addr_family, const void *group)
 {
 	struct brport *port;
-	printf("~~~ %s:%i: start\n", __func__, __LINE__);
 
 	list_for_each_entry(port, &br->excluded_ports_list, node) {
 		if (port->ifindex == port_ifindex)
