@@ -12,10 +12,6 @@
  *   Authors:	Alexey Kuznetsov, <kuznet@ms2.inr.ac.ru>
  */
 
-#include <linux/netlink.h>
-#include <linux/rtnetlink.h>
-#include <linux/if_bridge.h>
-
 #include <arpa/inet.h> // socklen_t
 #include <string.h> // memset()
 #include <stdio.h>
@@ -23,6 +19,10 @@
 #include <errno.h>
 #include <time.h> // time()
 #include <unistd.h> // close()
+
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
+#include <linux/if_bridge.h>
 
 #include "brmldproxy.h"
 
