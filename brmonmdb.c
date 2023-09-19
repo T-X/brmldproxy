@@ -16,6 +16,7 @@
 #include <string.h> // memset()
 #include <stdio.h>
 #include <stdlib.h> // exit()
+#include <sys/time.h>
 #include <errno.h>
 #include <time.h> // time()
 #include <unistd.h> // close()
