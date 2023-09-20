@@ -730,7 +730,7 @@ int setup_proxy_port_rx_query(struct bridge *br, struct brport *port)
  *
  * This is ensured by checking the presence of a specific firewall mark,
  * PD_FWMARK. If present, then the packet is allowed, otherwise dropped.
- * Also see setup_proxy_port_rx() and setup_proxy_port_tx_redir().
+ * Also see setup_proxy_port_rx() and setup_proxy_port_tx_dummy().
  *
  * TODO: also do this for excluded ports? or fully exclude them?
  *
@@ -775,7 +775,7 @@ static void setup_proxy_ports_wait(void)
 }
 
 /**
- * setup_proxy_port_tx_redir() - redirect MLD from dummy iface to its proxied port
+ * setup_proxy_port_tx_dummy() - redirect MLD from dummy iface to its proxied port
  * @br: the bridge for which MLD proxying is applied on
  * @port: the proxied port which will respond with proxied/bundled MLD
  *
@@ -792,7 +792,7 @@ static void setup_proxy_ports_wait(void)
  *
  * Return: Zero on success, -ENOEXEC otherwise.
  */
-static int setup_proxy_port_tx_redir(struct bridge *br, struct brport *port)
+static int setup_proxy_port_tx_dummy(struct bridge *br, struct brport *port)
 {
 	int ret = 0;
 
@@ -835,7 +835,7 @@ static int setup_proxy_ports(struct bridge *br)
 	setup_proxy_ports_wait();
 
 	list_for_each_entry(port, &br->proxied_ports_list, node) {
-		ret = setup_proxy_port_tx_redir(br, port);
+		ret = setup_proxy_port_tx_dummy(br, port);
 		if (ret < 0)
 			return ret;
 	}
@@ -843,7 +843,7 @@ static int setup_proxy_ports(struct bridge *br)
 	return 0;
 }
 
-static void teardown_proxy_port_tx_redir(struct brport *port)
+static void teardown_proxy_port_tx_dummy(struct brport *port)
 {
 	system_format("tc filter delete dev %s parent ffff: protocol ipv6 prio 4223 u32", port->prname);
 	system_format("tc qdisc del dev %s handle ffff: root fq_codel", port->prname);
@@ -878,7 +878,7 @@ static void teardown_proxy_port(struct brport *port)
 		return;
 
 	listener_flush(port);
-	teardown_proxy_port_tx_redir(port);
+	teardown_proxy_port_tx_dummy(port);
 	teardown_proxy_port_tx(port);
 	teardown_proxy_port_rx(port);
 	teardown_proxy_port_iface(port);
