@@ -287,6 +287,114 @@ sudo tc filter add dev brmldp0 parent ffff: protocol ipv6 prio 4223 u32 ht 2: ma
 sudo tc filter add dev brmldp0 parent ffff: protocol ipv6 prio 4223 u32 match ip6 protocol 0 0xff match u32 0x3a000502 0xffffffff at 40 match u32 0x00000000 0xffff0000 at 44 link 2:
 ```
 
+## Add/remove incoming query
+
+Issue: Last listener leaving not reported. Due to tc redirections removed
+before kernel emits the MLD Report.
+
+Solution: Do not dynamically remove dummy->port redirection.
+Instead only remove port->dummy rule for MLD query. (And wait
+a few seconds after setting up brmldp* port, before adding
+tc redirection rules.)
+
+This works for removal:
+
+$ tc filter delete dev bat0 parent ffff: handle 2::800  protocol ipv6 prio 4223 u32
+
+Before:
+
+```
+root@ffv-021764a43100:~# tc filter show dev bat0 parent ffff:
+filter protocol ipv6 pref 4223 u32 chain 0
+filter protocol ipv6 pref 4223 u32 chain 0 fh 2: ht divisor 1
+filter protocol ipv6 pref 4223 u32 chain 0 fh 2::800 order 2048 key ht 2 bkt 0 link 1: not_in_hw
+  match 82000000/ff000000 at 48
+filter protocol ipv6 pref 4223 u32 chain 0 fh 2::801 order 2049 key ht 2 bkt 0 link 1: not_in_hw
+  match 83000000/ff000000 at 48
+filter protocol ipv6 pref 4223 u32 chain 0 fh 2::802 order 2050 key ht 2 bkt 0 link 1: not_in_hw
+  match 84000000/ff000000 at 48
+filter protocol ipv6 pref 4223 u32 chain 0 fh 2::803 order 2051 key ht 2 bkt 0 link 1: not_in_hw
+  match 8f000000/ff000000 at 48
+filter protocol ipv6 pref 4223 u32 chain 0 fh 1: ht divisor 1
+filter protocol ipv6 pref 4223 u32 chain 0 fh 1::800 order 2048 key ht 1 bkt 0 terminal flowid ??? not_in_hw
+  match 00000000/00000000 at 0
+        action order 1: mirred (Ingress Mirror to device brmldp0) pipe
+        index 1 ref 1 bind 1
+
+filter protocol ipv6 pref 4223 u32 chain 0 fh 800: ht divisor 1
+filter protocol ipv6 pref 4223 u32 chain 0 fh 800::800 order 2048 key ht 800 bkt 0 link 2: not_in_hw
+  match 00000000/0000ff00 at 4
+  match 3a000502/ffffffff at 40
+  match 00000000/ffff0000 at 44
+```
+
+After:
+
+```
+root@ffv-021764a43100:~# tc filter delete dev bat0 parent ffff: handle 2::800  protocol ipv6 prio 4223 u32
+root@ffv-021764a43100:~# tc filter show dev bat0 parent ffff:
+filter protocol ipv6 pref 4223 u32 chain 0
+filter protocol ipv6 pref 4223 u32 chain 0 fh 2: ht divisor 1
+filter protocol ipv6 pref 4223 u32 chain 0 fh 2::801 order 2049 key ht 2 bkt 0 link 1: not_in_hw
+  match 83000000/ff000000 at 48
+filter protocol ipv6 pref 4223 u32 chain 0 fh 2::802 order 2050 key ht 2 bkt 0 link 1: not_in_hw
+  match 84000000/ff000000 at 48
+filter protocol ipv6 pref 4223 u32 chain 0 fh 2::803 order 2051 key ht 2 bkt 0 link 1: not_in_hw
+  match 8f000000/ff000000 at 48
+filter protocol ipv6 pref 4223 u32 chain 0 fh 1: ht divisor 1
+filter protocol ipv6 pref 4223 u32 chain 0 fh 1::800 order 2048 key ht 1 bkt 0 terminal flowid ??? not_in_hw
+  match 00000000/00000000 at 0
+        action order 1: mirred (Ingress Mirror to device brmldp0) pipe
+        index 1 ref 1 bind 1
+
+filter protocol ipv6 pref 4223 u32 chain 0 fh 800: ht divisor 1
+filter protocol ipv6 pref 4223 u32 chain 0 fh 800::800 order 2048 key ht 800 bkt 0 link 2: not_in_hw
+  match 00000000/0000ff00 at 4
+  match 3a000502/ffffffff at 40
+  match 00000000/ffff0000 at 44
+```
+
+Readding:
+
+```
+root@ffv-021764a43100:~# tc filter add dev bat0 parent ffff: protocol ipv6 prio 4223 u32 ht 2: match u8 130 0xff at 48 link 1:
+root@ffv-021764a43100:~# tc filter show dev bat0 parent ffff:
+filter protocol ipv6 pref 4223 u32 chain 0 
+filter protocol ipv6 pref 4223 u32 chain 0 fh 2: ht divisor 1 
+filter protocol ipv6 pref 4223 u32 chain 0 fh 2::800 order 2048 key ht 2 bkt 0 link 1: not_in_hw 
+  match 82000000/ff000000 at 48
+filter protocol ipv6 pref 4223 u32 chain 0 fh 2::801 order 2049 key ht 2 bkt 0 link 1: not_in_hw 
+  match 83000000/ff000000 at 48
+filter protocol ipv6 pref 4223 u32 chain 0 fh 2::802 order 2050 key ht 2 bkt 0 link 1: not_in_hw 
+  match 84000000/ff000000 at 48
+filter protocol ipv6 pref 4223 u32 chain 0 fh 2::803 order 2051 key ht 2 bkt 0 link 1: not_in_hw 
+  match 8f000000/ff000000 at 48
+filter protocol ipv6 pref 4223 u32 chain 0 fh 1: ht divisor 1 
+filter protocol ipv6 pref 4223 u32 chain 0 fh 1::800 order 2048 key ht 1 bkt 0 terminal flowid ??? not_in_hw 
+  match 00000000/00000000 at 0
+        action order 1: mirred (Ingress Mirror to device brmldp0) pipe
+        index 1 ref 1 bind 1
+
+filter protocol ipv6 pref 4223 u32 chain 0 fh 800: ht divisor 1 
+filter protocol ipv6 pref 4223 u32 chain 0 fh 800::800 order 2048 key ht 800 bkt 0 link 2: not_in_hw 
+  match 00000000/0000ff00 at 4
+  match 3a000502/ffffffff at 40
+  match 00000000/ffff0000 at 44
+root@ffv-021764a43100:~# 
+```
+
+With handle, add:
+
+```
+$ tc filter add dev bat0 parent ffff: handle 2::804 protocol ipv6 prio 4223 u32 ht 2: match u8 130 0xff at 48 link 1:
+```
+
+With handle, del:
+
+```
+$ tc filter delete dev bat0 parent ffff: handle 2::804  protocol ipv6 prio 4223 u32
+```
+
 
 ====
 
