@@ -33,7 +33,7 @@ struct brport {
 	unsigned int prifindex;
 };
 
-int setup_proxy_port_tx_redir(struct bridge *br, struct brport *port);
-void teardown_proxy_port_tx_redir(struct brport *port);
+int setup_proxy_port_rx_query(struct bridge *br, struct brport *port);
+void teardown_proxy_port_rx_query(struct brport *port);
 
 #endif /* __BRMLDPROXY_H__ */

@@ -201,7 +201,7 @@ static int listener_add_v6(struct bridge *br, int ifindex, const struct in6_addr
 			continue;
 
 		if (list_empty(&port->listener_list_v6))
-			setup_proxy_port_tx_redir(br, port);
+			setup_proxy_port_rx_query(br, port);
 		else if (listener_nudge_v6(&port->listener_list_v6, group, ifindex))
 			/* already exists */
 			continue;
@@ -273,7 +273,7 @@ static int listener_del_v6(struct bridge *br, int ifindex, const struct in6_addr
 			fprintf(stderr, "Warning: Could not find/delete listener %s?", groupstr);
 
 		if (list_empty(&port->listener_list_v6))
-			teardown_proxy_port_tx_redir(port);
+			teardown_proxy_port_rx_query(port);
 	}
 
 	return 0;

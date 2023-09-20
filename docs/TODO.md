@@ -25,6 +25,22 @@
        before setting br0 up (but this will miss the
        listeners on br0, too, somehow they are not cleaned
        from the MDB on interface down)
+[x] Fix high leave latency for last listener:
+    -> when the last listener leaves then no according MLD Report
+       is seen on proxy ports and it then generally takes about
+       MLD-query-interval * robustness-variable (+5/10s?) time
+       for an MLD querier / router to recognize this then
+    -> seems to take about 10 seconds for the MLD Report
+       of leaving listeners to be transmitted and we likely
+       remove the tc redirections through teardown_proxy_port_tx_redir()
+       before that
+    -> maybe keep dummy->port redirection through
+       setup_proxy_port_tx_redir() always on and dynamically
+       add/remove port->dummy MLD query redirects?
+       -> this would always transmit an MLD report on
+          interface up for the own link-local addresses?
+          But maybe that's ok if we set up tc redirections
+          some seconds after creating & setting up brmldp+?
 [ ] MLDv2 SSM listeners support
     (full MLDv2 support -> currently all treated like ASM)
 [x] multicast address filters
