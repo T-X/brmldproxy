@@ -127,44 +127,55 @@ static int listener_nudge_v6(struct list_head *list, const struct in6_addr *grou
 	return 0;
 }
 
-static int listener_create_socket_v6(int prifindex, const struct in6_addr *group)
+static int listener_create_socket_v6(char *prname, int prifindex,
+				     const struct in6_addr *group)
 {
-	int sd;					// Socket descriptor
-	struct sockaddr_in6 multicastAddr;	// Multicast addresse structure
-	struct ipv6_mreq multicastRequest;	// Multicast address join structure
+	int sd, ret;
+	struct sockaddr_in6 multicastAddr;	/* Multicast addresse structure */
+	struct ipv6_mreq multicastRequest;	/* Multicast address join structure */
 
-	// Construct bind structure
-	memset(&multicastAddr, 0, sizeof(multicastAddr));	// Zero out structure
-	multicastAddr.sin6_family = AF_INET6;		// Internet address family
-	// TODO: change from :: to ::1? ->
-	multicastAddr.sin6_addr = in6addr_any;		// Any incoming interface
-	multicastAddr.sin6_port = htons(0);		// Multicast port - let the OS decide
+	/* Construct bind structure */
+	memset(&multicastAddr, 0, sizeof(multicastAddr));	/* Zero out structure */
+	multicastAddr.sin6_family = AF_INET6;		/* Internet address family */
+	multicastAddr.sin6_addr = in6addr_any;		/* Any incoming interface */
+	multicastAddr.sin6_port = htons(0);		/* UDP port - let the OS decide */
 
-	// Create a best-effort datagram socket using UDP
-	if((sd = socket(PF_INET6, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
+	/* Create a best-effort datagram socket using UDP */
+	sd = socket(PF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+	if (sd < 0) {
 		perror("socket() failed");
 		return -1;
 	}
 
-	// TODO: use setsockopt(sd, SOL_SOCKET, SO_BINDTODEVICE, ...)?
+	/* Only allow (hypothetical) connections from own dummy
+	 * interface
+	 */
+	ret = setsockopt(sd, SOL_SOCKET, SO_BINDTODEVICE, prname,
+			 strlen(prname) + 1);
+	if (ret < 0) {
+		perror("setsockopt(SO_BINDTODEVICE) failed");
+		return -1;
+	}
 
-	// Bind to the multicast port
-	if(bind(sd, (struct sockaddr *) &multicastAddr, sizeof(multicastAddr)) < 0) {
+	/* Bind to the multicast port */
+	ret = bind(sd, (struct sockaddr *) &multicastAddr, sizeof(multicastAddr));
+	if (ret < 0) {
 		perror("bind() failed");
 		return -1;
 	}
 
-	// Specify the multicast group
+	/* Specify the multicast group */
 	multicastRequest.ipv6mr_multiaddr = *group;
 
-	// Accept multicast from specified interface
-	//multicastRequest.ipv6mr_interface = if_nametoindex(interface);
+	/* Accept multicast from specified interface */
 	multicastRequest.ipv6mr_interface = prifindex;
 
-	// Join the multicast address
-	if(setsockopt(sd, IPPROTO_IPV6, IPV6_JOIN_GROUP, (void *) &multicastRequest,
-		sizeof(multicastRequest)) < 0) {
-		perror("setsockopt() failed");
+	/* Join the multicast address */
+	ret = setsockopt(sd, IPPROTO_IPV6, IPV6_JOIN_GROUP,
+			 (void *) &multicastRequest,
+			 sizeof(multicastRequest));
+	if (ret < 0) {
+		perror("setsockopt(IPV6_JOIN_GROUP) failed");
 		return -1;
 	}
 
@@ -206,7 +217,7 @@ static int listener_add_v6(struct bridge *br, int ifindex, const struct in6_addr
 			/* already exists */
 			continue;
 
-		sd = listener_create_socket_v6(port->prifindex, group);
+		sd = listener_create_socket_v6(port->prname, port->prifindex, group);
 		if (sd < 0) {
 			fprintf(stderr, "Error: Could not create IPv6 multicast listening socket\n");
 			return sd;
