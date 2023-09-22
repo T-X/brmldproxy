@@ -2,6 +2,13 @@
 
 A userspace controlled MLD proxy implementation for a Linux bridge.
 
+The bridge itself will appear as a single multicast listening host
+to any MLD querier on a configured proxy port, acting in deputy
+for any other multicast listener behind adjacent bridge ports.
+This potentially reduces MLD report overhead.
+brmldproxy further allows to filter out specific multicast groups
+and bridge ports from its combined MLD report.
+
 # Why
 
 1) To reduce duplicate MLD reports: Multiple hosts might join
@@ -27,6 +34,21 @@ A userspace controlled MLD proxy implementation for a Linux bridge.
    forwarding MLD reports for the (currently) a lot less
    commonly used routable multicast groups to multicast routers.
    Again to overall reduce MLD overhead.
+
+## How
+
+1. For each proxied port a new Linux dummy interface named "brmldp0/1/..." is created.
+2. Any multicast listener snooped by the bridge on adjacent ports
+   gets installed as a new socket with an according multicast listener join
+   on this dummy interface.
+4. TC redirects MLD queries ingress on a proxied port to its assigned dummy interface.
+5. The Linux IPv6 stack will respond on the dummy interface to the redirected MLD queries with MLD reports
+6. TC will redirect MLD reports from the dummy interface to its according proxied port.
+
+brmldproxy takes care of managing these TC redirections and dummy interface setups
+in response to the provided configuration options on the one hand. And in
+response to multicast listener state changes, which it got notified of via
+Netlink from the Linux bridge, on the other.
 
 ## Usage
 
@@ -96,6 +118,42 @@ ff02:1111::1234 is disallowed.
 * SIGUSR1: dumps listener status to stdout.
   This will list the listener groups which a proxied port will
   send (an) IGMP/MLD report(s) for.
+
+Example output of SIGUSR1:
+
+```
+$ brmldproxy -6 -b br-client -p bat0 -e local-port -E ff05::abcd -E ff02::/ff0f:: -E ff00::/ff0e::
+* included:
+        br-client
+        eth0
+* excluded:
+        local-port
+* proxied:
+        bat0
+[SIGUSR1 here]
+Proxied listeners for br-client:
+        bat0:
+                ff15::42 (eth0)
+                ff15::123 (eth0)
+                ff05::2:1001 (br-client)
+                ff05::2:1001 (eth0)
+```
+
+## Limitations
+
+* brmldproxy cannot fully filter out the IPv6 solicited-node multicast
+  address from the bridge interface itself. As the Linux kernel
+  currently needs an IPv6 address installed on the dummy interface
+  (which is copied from the bridge interface) to be able to respond via MLD.
+  And brmldproxy is not capable of modifying the MLD report which the
+  Linux kernel has generated on this dummy interface.
+* There is currently no IPv4/IGMP support yet.
+* There is no support for a Linux bridge in MLDv2 mode yet.
+  (However the proxied MLD report is independent of that, the
+   Linux IPv6 stack will generate either an MLDv1 or MLDv2 report
+   depending on if it received an MLDv1 or MLDv2 query on its proxided port.)
+
+Also see:
 
 ## TODOs
 
