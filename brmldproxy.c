@@ -98,18 +98,10 @@ static void usage()
 	printf("    -4                                  IPv4-only mode (not yet implemented)\n");
 	printf("    -6                                  IPv6-only mode (default)\n");
 	printf("    -i <bridge-port>                    bridge port to proxy (from)\n");
-	// TODO:
-	//printf("    -i <bridge-port>[@<bridge-port]     bridge port to proxy (from)\n");
 	printf("    -e <bridge-port>                    bridge port to exclude from proxying\n");
-	// TODO:
-	//printf("    -e <bridge-port>[@<bridge-port]     bridge port to exclude from proxying\n");
 	printf("    -p <bridge-port>                    bridge port to proxy to\n");
 	printf("    -I <mcast-address>[/mask]           multicast IP address (range) to include in proxying\n");
-	//printf("    -I <mcast-address>[/mask][@br-port] multicast IP address (range) to include in proxying\n");
 	printf("    -E <mcast-address>[/mask]           multicast IP address (range) to exclude from proxying\n");
-	//printf("    -E <mcast-address>[/mask][@br-port] multicast IP address (range) to exclude from proxying\n");
-	// TODO: insert filters to avoid MLD being forwarded on configured ports:
-	//printf("    -f\n");
 }
 
 static int parse_bridge_arg(struct bridge *br, int argc, char *argv[],
@@ -477,7 +469,6 @@ static int get_args_final(struct bridge *br, struct list_head *ports, int argc, 
 
 	optind = 1;
 
-//	while ((opt = getopt(argc, argv, "b:46i:e:p:I:E:fh")) != -1) {
 	while ((opt = getopt(argc, argv, "46b:i:e:p:I:E:h")) != -1) {
 		switch (opt) {
 		case '4':
@@ -616,7 +607,6 @@ static int system_format(const char *format, ...)
 	if (ret < 0)
 		return ret;
 
-//	printf("cmd: %s\n", cmd);
 	return system(cmd);
 }
 
