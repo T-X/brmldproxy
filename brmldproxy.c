@@ -739,7 +739,7 @@ static int setup_proxy_port_tx(struct bridge *br, struct brport *port)
 	ret |= system_format("tc filter add dev %s parent fffe: protocol ipv6 prio 4223 u32 ht 2: match u8 143 0xff at 48 link 1:", port->name);
 	ret |= system_format("tc filter add dev %s parent fffe: protocol ipv6 prio 4222 handle %s/%s fw classid 1:1", port->name, PD_FWMARK, PD_FWMARK);
 	ret |= system_format("tc filter add dev %s parent fffe: protocol ipv6 prio 4223 u32 match ip6 protocol 0 0xff match u32 0x3a000502 0xffffffff at 40 match u32 0x00000000 0xffff0000 at 44 link 2:", port->name);
-	ret |= system_format("tc filter add dev %s parent fffe: protocol ipv6 prio 4224 matchall classid 1:1", port->name);
+	ret |= system_format("tc filter add dev %s parent fffe: prio 4224 matchall classid 1:1", port->name);
 
 	if (ret)
 		return -ENOEXEC;
