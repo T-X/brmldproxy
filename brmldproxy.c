@@ -52,6 +52,8 @@
  */
 
 #define PD_FWMARK "0x0800000"
+#define BRMLDP_PFX "brmldp"
+#define BRMLDPB_PFX "brmldpb"
 
 void signal_handler_shutdown(int signum)
 {
@@ -201,7 +203,9 @@ static int add_bridge_port(struct list_head *ports, const char *name, unsigned i
 
 	port->ifindex = ifindex;
 	port->prifindex = 0;
+	port->prbifindex = 0;
 	memset(port->prname, 0, sizeof(port->prname));
+	memset(port->prbname, 0, sizeof(port->prbname));
 	INIT_LIST_HEAD(&port->node);
 	INIT_LIST_HEAD(&port->listener_list_v4);
 	INIT_LIST_HEAD(&port->listener_list_v6);
@@ -610,17 +614,24 @@ static int system_format(const char *format, ...)
 	return system(cmd);
 }
 
-static int setup_proxy_port_iface(struct bridge *br, struct brport *port)
+static int create_proxy_port_iface(short int i, int type_bridge)
 {
-	static short i = 0;
+	return system_format("ip link add dev %s%hi type %s",
+			     type_bridge ? BRMLDPB_PFX : BRMLDP_PFX, i,
+			     type_bridge ? "bridge" : "dummy");
+}
 
+static int create_proxy_port_iface_retried(short int *idx, int type_bridge)
+{
+	static short int i = 0;
 	int ret;
 
 	while (i >= 0) {
-		ret = system_format("ip link add dev brmldp%hu type dummy", i);
+		ret = create_proxy_port_iface(i, type_bridge);
+
 		/* created successfully */
 		if (ret == 0)
-			break;
+			goto out;
 
 		/* unexpected error */
 		if (ret != 1)
@@ -633,7 +644,23 @@ static int setup_proxy_port_iface(struct bridge *br, struct brport *port)
 	if (i < 0)
 		return -ENOMEM;
 
-	ret = snprintf(port->prname, sizeof(port->prname), "brmldp%hu", i);
+out:
+	*idx = i;
+	return 0;
+}
+
+static int setup_proxy_port_iface(struct bridge *br, struct brport *port)
+{
+	short int idx;
+	int ret;
+
+	ret = create_proxy_port_iface_retried(&idx, 0);
+	if (ret < 0)
+		return ret;
+
+	/* dummy proxy interface (a bridge port) */
+	ret = snprintf(port->prname, sizeof(port->prname), BRMLDP_PFX "%hi",
+		       idx);
 	if (ret < 0)
 		return -EINVAL;
 
@@ -641,21 +668,37 @@ static int setup_proxy_port_iface(struct bridge *br, struct brport *port)
 	if (!port->prifindex)
 		return -ENOENT;
 
-	ret = system_format("ip link set address $(cat /sys/class/net/%s/address) arp on up dev brmldp%hu", br->name, i);
+	/* bridge for dummy proxy port */
+	ret = create_proxy_port_iface(idx, 1);
+	if (ret < 0)
+		return ret;
+
+	ret = snprintf(port->prbname, sizeof(port->prbname), BRMLDPB_PFX "%hi",
+		       idx);
+	if (ret < 0)
+		return -EINVAL;
+
+	port->prbifindex = if_nametoindex(port->prbname);
+	if (!port->prbifindex)
+		return -ENOENT;
+
+	ret = system_format("ip link set dev %s%hi address $(cat /sys/class/net/%s/address) up master %s%hi",
+			    BRMLDP_PFX, idx, br->name, BRMLDPB_PFX, idx);
+	ret |= system_format("ip link set dev %s%hi address $(cat /sys/class/net/%s/address) up",
+			     BRMLDPB_PFX, idx, br->name);
 	if (ret != 0)
 		return -ENOEXEC;
 
-	i++;
 	return 0;
 }
 
 /**
- * setup_proxy_port_rx() - copy MLD report on proxied port into dummy iface
+ * setup_proxy_port_rx() - copy MLD on proxied port into dummy iface
  * @br: the bridge for which MLD proxying is applied on
  * @port: the proxied port which will respond with proxied/bundled MLD report
  *
- * Enable reception of a copy of MLD reports on a proxied port via tc into the
- * according dummy interface.
+ * Enable reception of a copy of MLD on a proxied port via tc into the according
+ * dummy interface.
  *
  * Note: Needs to be copied, not redirected, so that the bridge can still learn
  * these listeners. So that another proxied port could adopt them from this
@@ -672,37 +715,11 @@ static int setup_proxy_port_rx(struct bridge *br, struct brport *port)
 	ret |= system_format("tc filter add dev %s parent ffff: protocol ipv6 prio 4223 handle 1: u32 divisor 1", port->name);
 	ret |= system_format("tc filter add dev %s parent ffff: protocol ipv6 prio 4223 u32 ht 1: match u8 0 0x00 action mirred ingress mirror dev %s", port->name, port->prname);
 	ret |= system_format("tc filter add dev %s parent ffff: protocol ipv6 prio 4223 handle 2: u32 divisor 1", port->name);
+	ret |= system_format("tc filter add dev %s parent ffff: handle 2::130 protocol ipv6 prio 4223 u32 ht 2: match u8 130 0xff at 48 link 1:", port->name);
 	ret |= system_format("tc filter add dev %s parent ffff: handle 2::131 protocol ipv6 prio 4223 u32 ht 2: match u8 131 0xff at 48 link 1:", port->name);
 	ret |= system_format("tc filter add dev %s parent ffff: handle 2::132 protocol ipv6 prio 4223 u32 ht 2: match u8 132 0xff at 48 link 1:", port->name);
 	ret |= system_format("tc filter add dev %s parent ffff: handle 2::143 protocol ipv6 prio 4223 u32 ht 2: match u8 143 0xff at 48 link 1:", port->name);
 	ret |= system_format("tc filter add dev %s parent ffff: protocol ipv6 prio 4223 u32 match ip6 protocol 0 0xff match u32 0x3a000502 0xffffffff at 40 match u32 0x00000000 0xffff0000 at 44 link 2:", port->name);
-
-	if (ret)
-		return -ENOEXEC;
-
-	return 0;
-}
-
-/**
- * setup_proxy_port_rx_query() - copy MLD query on proxied port into dummy iface
- * @br: the bridge for which MLD proxying is applied on
- * @port: the proxied port which will respond with proxied/bundled MLD report
- *
- * Enable reception of a copy of MLD queries on a proxied port via tc into the
- * according dummy interface.
- *
- * Should only be instantiated if there is going to be an MLD listener on the
- * dummy interface. To avoid unnecessary MLD reports, with the only entry
- * being for the solicited-node multicast address for the link-local address
- * of the dummy inteface itself.
- *
- * Return: Zero on success, -ENOEXEC otherwise.
- */
-int setup_proxy_port_rx_query(struct bridge *br, struct brport *port)
-{
-	int ret = 0;
-
-	ret |= system_format("tc filter add dev %s parent ffff: handle 2::130 protocol ipv6 prio 4223 u32 ht 2: match u8 130 0xff at 48 link 1:", port->name);
 
 	if (ret)
 		return -ENOEXEC;
@@ -802,6 +819,43 @@ static int setup_proxy_port_tx_dummy(struct bridge *br, struct brport *port)
 	return 0;
 }
 
+/**
+ * setup_proxy_port_rx_dummy() - drop packets ingress on dummy bridge iface
+ * @port: the dummy bridge interface belonging to a proxied port
+ *
+ * Filter any ingress packets on the dummy bridge iface, MLD queries in
+ * particular.
+ *
+ * This is to dynamically disallow MLD reports on proxied ports if there is
+ * no registered listener on adjacent, included ports, to reduce MLD report
+ * overhead.
+ *
+ * Return: Zero on success, -ENOEXEC otherwise.
+ */
+int setup_proxy_port_rx_dummy_query(struct brport *port)
+{
+	int ret;
+
+	ret = system_format("tc filter add dev %s parent ffff: protocol ipv6 prio 4223 u32 match ip6 protocol 0 0xff action drop", port->prbname);
+	if (ret)
+		return -ENOEXEC;
+
+	return 0;
+}
+
+static int setup_proxy_port_rx_dummy(struct brport *port)
+{
+	int ret = 0;
+
+	ret |= system_format("tc qdisc add dev %s handle ffff: ingress", port->prbname);
+	ret |= setup_proxy_port_rx_dummy_query(port);
+
+	if (ret)
+		return -ENOEXEC;
+
+	return 0;
+}
+
 /* TODO: replace with netlink maybe? */
 static int setup_proxy_ports(struct bridge *br)
 {
@@ -820,6 +874,10 @@ static int setup_proxy_ports(struct bridge *br)
 		ret = setup_proxy_port_tx(br, port);
 		if (ret < 0)
 			return ret;
+
+		ret = setup_proxy_port_rx_dummy(port);
+		if (ret < 0)
+			return ret;
 	}
 
 	setup_proxy_ports_wait();
@@ -831,6 +889,17 @@ static int setup_proxy_ports(struct bridge *br)
 	}
 
 	return 0;
+}
+
+void teardown_proxy_port_rx_dummy_query(struct brport *port)
+{
+	system_format("tc filter del dev %s parent ffff: protocol ipv6 prio 4223 u32 match ip6 protocol 0 0xff action drop", port->prbname);
+}
+
+static void teardown_proxy_port_rx_dummy(struct brport *port)
+{
+	teardown_proxy_port_rx_dummy_query(port);
+	system_format("tc qdisc del dev %s handle ffff: ingress", port->prbname);
 }
 
 static void teardown_proxy_port_tx_dummy(struct brport *port)
@@ -859,6 +928,7 @@ void teardown_proxy_port_rx_query(struct brport *port)
 
 static void teardown_proxy_port_iface(struct brport *port)
 {
+	system_format("ip link del %s", port->prbname);
 	system_format("ip link del %s", port->prname);
 }
 
@@ -868,6 +938,7 @@ static void teardown_proxy_port(struct brport *port)
 		return;
 
 	listener_flush(port);
+	teardown_proxy_port_rx_dummy(port);
 	teardown_proxy_port_tx_dummy(port);
 	teardown_proxy_port_tx(port);
 	teardown_proxy_port_rx(port);

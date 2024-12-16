@@ -127,7 +127,7 @@ static int listener_nudge_v6(struct list_head *list, const struct in6_addr *grou
 	return 0;
 }
 
-static int listener_create_socket_v6(char *prname, int prifindex,
+static int listener_create_socket_v6(char *prbname, int prbifindex,
 				     const struct in6_addr *group)
 {
 	int sd, ret;
@@ -150,8 +150,8 @@ static int listener_create_socket_v6(char *prname, int prifindex,
 	/* Only allow (hypothetical) connections from own dummy
 	 * interface
 	 */
-	ret = setsockopt(sd, SOL_SOCKET, SO_BINDTODEVICE, prname,
-			 strlen(prname) + 1);
+	ret = setsockopt(sd, SOL_SOCKET, SO_BINDTODEVICE, prbname,
+			 strlen(prbname) + 1);
 	if (ret < 0) {
 		perror("setsockopt(SO_BINDTODEVICE) failed");
 		return -1;
@@ -168,7 +168,7 @@ static int listener_create_socket_v6(char *prname, int prifindex,
 	multicastRequest.ipv6mr_multiaddr = *group;
 
 	/* Accept multicast from specified interface */
-	multicastRequest.ipv6mr_interface = prifindex;
+	multicastRequest.ipv6mr_interface = prbifindex;
 
 	/* Join the multicast address */
 	ret = setsockopt(sd, IPPROTO_IPV6, IPV6_JOIN_GROUP,
@@ -212,12 +212,12 @@ static int listener_add_v6(struct bridge *br, int ifindex, const struct in6_addr
 			continue;
 
 		if (list_empty(&port->listener_list_v6))
-			setup_proxy_port_rx_query(br, port);
+			teardown_proxy_port_rx_dummy_query(port);
 		else if (listener_nudge_v6(&port->listener_list_v6, group, ifindex))
 			/* already exists */
 			continue;
 
-		sd = listener_create_socket_v6(port->prname, port->prifindex, group);
+		sd = listener_create_socket_v6(port->prbname, port->prbifindex, group);
 		if (sd < 0) {
 			fprintf(stderr, "Error: Could not create IPv6 multicast listening socket\n");
 			return sd;
@@ -284,7 +284,7 @@ static int listener_del_v6(struct bridge *br, int ifindex, const struct in6_addr
 			fprintf(stderr, "Warning: Could not find/delete listener %s?", groupstr);
 
 		if (list_empty(&port->listener_list_v6))
-			teardown_proxy_port_rx_query(port);
+			setup_proxy_port_rx_dummy_query(port);
 	}
 
 	return 0;

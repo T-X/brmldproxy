@@ -31,9 +31,12 @@ struct brport {
 
 	char prname[IFNAMSIZ];
 	unsigned int prifindex;
+
+	char prbname[IFNAMSIZ];
+	unsigned int prbifindex;
 };
 
-int setup_proxy_port_rx_query(struct bridge *br, struct brport *port);
-void teardown_proxy_port_rx_query(struct brport *port);
+int setup_proxy_port_rx_dummy_query(struct brport *port);
+void teardown_proxy_port_rx_dummy_query(struct brport *port);
 
 #endif /* __BRMLDPROXY_H__ */
