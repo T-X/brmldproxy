@@ -55,12 +55,12 @@
 #define BRMLDP_PFX "brmldp"
 #define BRMLDPB_PFX "brmldpb"
 
-void signal_handler_shutdown(int signum)
+void signal_handler_shutdown(__attribute__ ((unused)) int signum)
 {
 	bridge_monitor_mdb_shutdown();
 }
 
-void signal_handler_status(int signum)
+void signal_handler_status(__attribute__((unused)) int signum)
 {
 	bridge_monitor_mdb_status();
 }
@@ -694,7 +694,6 @@ static int setup_proxy_port_iface(struct bridge *br, struct brport *port)
 
 /**
  * setup_proxy_port_rx() - copy MLD on proxied port into dummy iface
- * @br: the bridge for which MLD proxying is applied on
  * @port: the proxied port which will respond with proxied/bundled MLD report
  *
  * Enable reception of a copy of MLD on a proxied port via tc into the according
@@ -707,7 +706,7 @@ static int setup_proxy_port_iface(struct bridge *br, struct brport *port)
  *
  * Return: Zero on success, -ENOEXEC otherwise.
  */
-static int setup_proxy_port_rx(struct bridge *br, struct brport *port)
+static int setup_proxy_port_rx(struct brport *port)
 {
 	int ret = 0;
 
@@ -729,7 +728,6 @@ static int setup_proxy_port_rx(struct bridge *br, struct brport *port)
 
 /**
  * setup_proxy_port_tx() - only allow MLD reports from dummy ifaces
- * @br: the bridge for which MLD proxying is applied on
  * @port: the proxied port which will respond with proxied/bundled MLD
  *
  * Only allow transmissions of MLD reports on the given proxied port for packets
@@ -743,7 +741,7 @@ static int setup_proxy_port_rx(struct bridge *br, struct brport *port)
  *
  * Return: Zero on success, -ENOEXEC otherwise.
  */
-static int setup_proxy_port_tx(struct bridge *br, struct brport *port)
+static int setup_proxy_port_tx(struct brport *port)
 {
 	int ret = 0;
 
@@ -783,7 +781,6 @@ static void setup_proxy_ports_wait(void)
 
 /**
  * setup_proxy_port_tx_dummy() - redirect MLD from dummy iface to its proxied port
- * @br: the bridge for which MLD proxying is applied on
  * @port: the proxied port which will respond with proxied/bundled MLD
  *
  * Redirect any MLD packet transmitted by the dummy interface which is
@@ -799,7 +796,7 @@ static void setup_proxy_ports_wait(void)
  *
  * Return: Zero on success, -ENOEXEC otherwise.
  */
-static int setup_proxy_port_tx_dummy(struct bridge *br, struct brport *port)
+static int setup_proxy_port_tx_dummy(struct brport *port)
 {
 	int ret = 0;
 
@@ -867,11 +864,11 @@ static int setup_proxy_ports(struct bridge *br)
 		if (ret < 0)
 			return ret;
 
-		ret = setup_proxy_port_rx(br, port);
+		ret = setup_proxy_port_rx(port);
 		if (ret < 0)
 			return ret;
 
-		ret = setup_proxy_port_tx(br, port);
+		ret = setup_proxy_port_tx(port);
 		if (ret < 0)
 			return ret;
 
@@ -883,7 +880,7 @@ static int setup_proxy_ports(struct bridge *br)
 	setup_proxy_ports_wait();
 
 	list_for_each_entry(port, &br->proxied_ports_list, node) {
-		ret = setup_proxy_port_tx_dummy(br, port);
+		ret = setup_proxy_port_tx_dummy(port);
 		if (ret < 0)
 			return ret;
 	}

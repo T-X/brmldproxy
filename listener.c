@@ -44,7 +44,9 @@ static int listener_filter_check_v4(struct bridge *br,
 {
 	int ret = MCAST_INCLUDE;
 	/* TODO */
-	return  ret;
+	(void)br;
+	(void)group;
+	return ret;
 }
 
 static struct in6_addr listener_and_in6_addr(const struct in6_addr *in1,
@@ -109,6 +111,10 @@ static int listener_filter_check(struct bridge *br, int addr_family,
 
 static int listener_add_v4(struct bridge *br, int ifindex, const struct in_addr *group)
 {
+	/* TODO */
+	(void)br;
+	(void)ifindex;
+	(void)group;
 	return 0;
 }
 
@@ -255,6 +261,10 @@ static void listener_purge(struct listener *listener)
 
 static int listener_del_v4(struct bridge *br, int ifindex, const struct in_addr *group)
 {
+	/* TODO */
+	(void)br;
+	(void)ifindex;
+	(void)group;
 	return 0;
 }
 

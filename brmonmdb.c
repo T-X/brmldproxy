@@ -77,8 +77,7 @@ struct rtnl_handle {
 static void bridge_monitor_mdb_check(void);
 
 
-typedef int (*rtnl_listen_filter_t)(struct rtnl_ctrl_data *,
-				    struct nlmsghdr *n, void *);
+typedef int (*rtnl_listen_filter_t)(struct nlmsghdr *n, void *);
 
 
 
@@ -263,7 +262,7 @@ static int rtnl_listen(struct rtnl_handle *rtnl,
 				exit(1);
 			}
 
-			err = handler(&ctrl, h, jarg);
+			err = handler(h, jarg);
 			if (err < 0)
 				return err;
 
@@ -340,8 +339,8 @@ static int __parse_mdb_nlmsg(struct nlmsghdr *n, struct rtattr **tb)
 	return 1;
 }
 
-static const char *rt_addr_n2a_r(int af, int len,
-				 const void *addr, char *buf, int buflen)
+static const char *
+rt_addr_n2a_r(int af, const void *addr, char *buf, int buflen)
 {
 	switch (af) {
 	case AF_INET:
@@ -396,8 +395,7 @@ static void print_mdb_entry(struct rtnl_handle *rth, int ifindex, const struct b
 		grp = &e->addr.u.ip6;
 	}
 
-	/* The ETH_ALEN argument is ignored for all cases but AF_PACKET */
-	addr = rt_addr_n2a_r(af, ETH_ALEN, grp, abuf, sizeof(abuf));
+	addr = rt_addr_n2a_r(af, grp, abuf, sizeof(abuf));
 	if (!addr)
 		return;
 
@@ -457,8 +455,7 @@ static void print_mdb_entries(struct rtnl_handle *rth, struct nlmsghdr *n,
 		br_print_mdb_entry(rth, ifindex, i, n);
 }
 
-static int accept_msg(struct rtnl_ctrl_data *ctrl,
-		      struct nlmsghdr *n, void *arg)
+static int accept_msg(struct nlmsghdr *n, void *arg)
 {
 	struct br_port_msg *r = NLMSG_DATA(n);
 	int len = n->nlmsg_len;
@@ -595,8 +592,7 @@ static int rtnl_recvmsg(int fd, struct msghdr *msg, char **answer)
 	return len;
 }
 
-static int rtnl_dump_done(struct nlmsghdr *h,
-			  const struct rtnl_dump_filter_arg *a)
+static int rtnl_dump_done(struct nlmsghdr *h)
 {
 	int len = *(int *)NLMSG_DATA(h);
 
@@ -607,13 +603,6 @@ static int rtnl_dump_done(struct nlmsghdr *h,
 
 	if (len < 0) {
 		errno = -len;
-
-//		if (a->errhndlr && (a->errhndlr(h, a->arg2) & RTNL_SUPPRESS_NLMSG_DONE_NLERR))
-//			return 0;
-
-		/* check for any messages returned from kernel */
-//		if (nl_dump_ext_ack_done(h, len))
-//			return len;
 
 		switch (errno) {
 		case ENOENT:
@@ -628,9 +617,6 @@ static int rtnl_dump_done(struct nlmsghdr *h,
 		}
 		return len;
 	}
-
-	/* check for any messages returned from kernel */
-//	nl_dump_ext_ack(h, NULL);
 
 	return 0;
 }
@@ -678,7 +664,7 @@ static int rtnl_dump_filter_l(struct rtnl_handle *rth,
 					dump_intr = 1;
 
 				if (h->nlmsg_type == NLMSG_DONE) {
-					err = rtnl_dump_done(h, a);
+					err = rtnl_dump_done(h);
 					if (err < 0) {
 						free(buf);
 						return -1;
