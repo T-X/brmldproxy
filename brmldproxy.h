@@ -18,7 +18,7 @@ struct bridge {
 
 	// IFNAMSIZ: typ. 16 on Linux?
 	char name[IFNAMSIZ];
-	unsigned int ifindex;
+	int ifindex;
 };
 
 struct brport {
@@ -27,13 +27,13 @@ struct brport {
 	struct list_head listener_list_v6; // TODO: make this a hash table?
 
 	char name[IFNAMSIZ];
-	unsigned int ifindex;
+	int ifindex;
 
 	char prname[IFNAMSIZ];
-	unsigned int prifindex;
+	int prifindex;
 
 	char prbname[IFNAMSIZ];
-	unsigned int prbifindex;
+	int prbifindex;
 };
 
 int setup_proxy_port_rx_dummy_query(struct brport *port);

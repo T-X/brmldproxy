@@ -13,6 +13,7 @@
  */
 
 #include <arpa/inet.h> // socklen_t
+#include <limits.h>
 #include <string.h> // memset()
 #include <stdio.h>
 #include <stdlib.h> // exit()
@@ -246,7 +247,7 @@ static int rtnl_listen(struct rtnl_handle *rtnl,
 				}
 		}
 
-		for (h = (struct nlmsghdr *)buf; status >= sizeof(*h); ) {
+		for (h = (struct nlmsghdr *)buf; (size_t)status >= sizeof(*h); ) {
 			int err;
 			int len = h->nlmsg_len;
 			int l = len - sizeof(*h);
@@ -419,8 +420,22 @@ static void print_mdb_entry(struct rtnl_handle *rth, int ifindex, const struct b
 		return;
 	}
 
-	if (rth->bridge->ifindex != ifindex)
+	if (rth->bridge->ifindex > INT_MAX) {
+		fprintf(stderr,
+			"BUG: rth->bridge->ifindex > INT_MAX: %u > %i\n",
+			rth->bridge->ifindex, INT_MAX);
 		return;
+	}
+
+	if ((int)rth->bridge->ifindex != ifindex)
+		return;
+
+	if (e->ifindex > INT_MAX) {
+		fprintf(stderr,
+			"BUG: e->ifindex > INT_MAX: %u > %i\n",
+			rth->bridge->ifindex, INT_MAX);
+		return;
+	}
 
 	rth->update_cb(rth->bridge, e->ifindex, n->nlmsg_type, af, grp);
 }
