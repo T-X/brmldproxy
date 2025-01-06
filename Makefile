@@ -3,7 +3,7 @@
 
 all: brmldproxy
 
-CFLAGS += -Wall
+CFLAGS += -Wall -Wextra
 
 brmldproxy: brmldproxy.c brmonmdb.c listener.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -fPIC -D_GNU_SOURCE -o $@ $^ $(LDLIBS)
